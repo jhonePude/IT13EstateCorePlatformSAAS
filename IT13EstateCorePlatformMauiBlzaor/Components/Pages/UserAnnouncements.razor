@@ -1,0 +1,352 @@
+@page "/admin-announcements"
+@layout UserLayout
+@using Microsoft.Data.SqlClient
+@using System.Data
+@using IT13EstateCorePlatformMauiBlzaor.Data
+
+@if (isChecking) {
+    <p style="padding:40px;">Verifying module access...</p>
+}
+else if (!hasAccess) {
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1100px; width: 100%; height: 80%; margin-top: -100px;" />
+    </div>
+}
+else {
+    @* --- STATUS TOAST --- *@
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="status-toast">
+            @statusMessage
+        </div>
+    }
+
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Announcements</h1>
+                <p class="subtitle">Community updates for: <strong>@orgName</strong></p>
+            </div>
+            <div class="header-actions" >
+                <button class="btn-post" @onclick="() => showModal = true">
+                    <span class="plus-icon">+</span> Post Announcement
+                </button>
+                <input style="margin-top: 15px; margin-bottom: -20px;" type="text" placeholder="Search announcements..." @bind="searchTerm" @bind:event="oninput" class="search-input-sub" />
+            </div>
+        </header>
+
+        <div class="announcement-feed">
+            @if (!FilteredAnnouncements.Any())
+            {
+                <div class="empty-state">
+                    <span class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                        </svg>
+                    </span>
+                    <p>No announcements found.</p>
+                </div>
+            }
+            else
+            {
+                @foreach (var item in FilteredAnnouncements)
+                {
+                    <div class="announcement-card @(item.IsUrgent ? "urgent-accent" : "standard-accent")">
+                        <div class="card-top">
+                            <div class="title-row">
+                                <div class="title-group">
+                                    <h2 class="card-title">@item.Title</h2>
+                                    @if (item.IsUrgent)
+                                    {
+                                        <span class="badge-urgent">URGENT</span>
+                                    }
+                                </div>
+                                <div class="date-info">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                    @item.CreatedAt.ToString("MMM dd, yyyy")
+                                </div>
+                            </div>
+                            <p class="card-body-text">@item.Message</p>
+                        </div>
+                        
+                        <div class="card-footer">
+                            <span class="posted-by">Published by <strong>@item.PostedBy</strong></span>
+                            <button class="btn-delete" @onclick='() => TriggerDeleteConfirm(item)'>Remove Post</button>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@* --- MODAL FOR NEW ANNOUNCEMENT --- *@
+@if (showModal)
+{
+    <div class="modal-backdrop">
+        <div class="modal-content">
+            <h3 style="margin:0 0 10px 0;">New Announcement</h3>
+            <p style="font-size:13px; color:#64748b; margin-bottom:20px;">This post will only be visible to members of <b>@orgName</b>.</p>
+            
+            <label>Title Headline</label>
+            <input type="text" @bind="newTitle" class="form-input" placeholder="e.g. System Maintenance" />
+
+            <label>Message Content</label>
+            <textarea @bind="newMessage" class="form-input" rows="4" placeholder="Write the details here..."></textarea>
+
+            <div class="urgent-toggle-row">
+                <input type="checkbox" @bind="isUrgent" id="urgentCheck" />
+                <label for="urgentCheck">Mark as Urgent Priority</label>
+            </div>
+
+            <div style="display:flex; gap:12px; margin-top:10px;">
+                <button class="btn-post" style="flex:1;" @onclick="TriggerPostConfirm">Publish Now</button>
+                <button class="btn-outline" style="flex:1;" @onclick="CloseModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+    @if (showConfirmModal)
+    {
+        <div class="modal-backdrop" style="z-index: 10000;">
+            <div class="modal-content" style="width: 400px; text-align: center;">
+                <div class="confirm-icon">
+                    @if (confirmType == "delete")
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 10"/>
+                        </svg>
+                    }
+                </div>
+                <h3 style="margin-top: 10px;">@confirmTitle</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                @confirmMessage
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-outline" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="@(confirmType == "delete" ? "btn-danger-action" : "btn-post")" 
+                        style="flex:1;" @onclick="ExecuteConfirmedAction">
+                    @(confirmType == "delete" ? "Yes, Remove" : "Yes, Publish")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = false, showModal = false, isUrgent = false;
+    private string _conn = DbConfig.ConnectionString;
+    private string orgName = "", newTitle = "", newMessage = "", statusMessage = "", searchTerm = "";
+    private int myOrgId => Login.LoggedInOrgId; 
+
+    private List<AnnouncementModel> announcements = new();
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+    private string confirmTitle = "";
+    private string confirmMessage = "";
+    private string confirmType = ""; // "post" or "delete"
+    private int? pendingDeleteId = null;
+
+    // Logic for Filtering based on Search
+    private IEnumerable<AnnouncementModel> FilteredAnnouncements => announcements.Where(a => 
+        string.IsNullOrWhiteSpace(searchTerm) || 
+        a.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || 
+        a.Message.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await CheckAccess("Announcements");
+        if (hasAccess) await LoadAnnouncements();
+        isChecking = false;
+    }
+
+    private async Task LoadAnnouncements() {
+        try {
+            announcements.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlCommand cmdOrg = new("SELECT Name FROM Organizations WHERE OrganizationId = @oid", conn);
+            cmdOrg.Parameters.AddWithValue("@oid", myOrgId);
+            orgName = (await cmdOrg.ExecuteScalarAsync())?.ToString() ?? "Your Organization";
+
+            string sql = "SELECT Id, Title, Message, IsUrgent, PostedBy, CreatedAt FROM Announcements WHERE OrganizationId = @oid ORDER BY CreatedAt DESC";
+            using SqlCommand cmd = new(sql, conn); 
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) {
+                announcements.Add(new AnnouncementModel {
+                    Id = reader.GetInt32(0), Title = reader.GetString(1), Message = reader.GetString(2),
+                    IsUrgent = reader.GetBoolean(3), PostedBy = reader.GetString(4), CreatedAt = reader.GetDateTime(5)
+                });
+            }
+        } catch { }
+    }
+
+    // --- Confirmation Trigger Logic ---
+
+    private void TriggerPostConfirm() {
+        if (string.IsNullOrEmpty(newTitle) || string.IsNullOrEmpty(newMessage)) return;
+        confirmType = "post";
+        confirmTitle = "Publish Announcement?";
+        confirmMessage = $"Are you sure you want to broadcast '{newTitle}' to the entire community?";
+        showConfirmModal = true;
+    }
+
+    private void TriggerDeleteConfirm(AnnouncementModel item) {
+        pendingDeleteId = item.Id;
+        confirmType = "delete";
+        confirmTitle = "Remove Announcement?";
+        confirmMessage = $"Are you sure you want to delete '{item.Title}'? This action cannot be undone and the post will vanish from the community feed.";
+        showConfirmModal = true;
+    }
+
+    private async Task ExecuteConfirmedAction() {
+        showConfirmModal = false;
+        if (confirmType == "post") await PostAnnouncement();
+        else if (confirmType == "delete" && pendingDeleteId.HasValue) await DeleteAnnouncement(pendingDeleteId.Value);
+    }
+
+    // --- Execution Logic ---
+
+    private async Task PostAnnouncement() {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "INSERT INTO Announcements (OrganizationId, Title, Message, IsUrgent, PostedBy) VALUES (@oid, @title, @msg, @urgent, @by)";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            cmd.Parameters.AddWithValue("@title", newTitle);
+            cmd.Parameters.AddWithValue("@msg", newMessage);
+            cmd.Parameters.AddWithValue("@urgent", isUrgent);
+            cmd.Parameters.AddWithValue("@by", Login.LoggedInName ?? "Staff Admin");
+            await cmd.ExecuteNonQueryAsync();
+            
+            ShowToast("Announcement published successfully!");
+            CloseModal();
+            await LoadAnnouncements();
+        } catch { }
+    }
+
+    private async Task DeleteAnnouncement(int id) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlCommand cmd = new("DELETE FROM Announcements WHERE Id = @id AND OrganizationId = @oid", conn);
+            cmd.Parameters.AddWithValue("@id", id); 
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            await cmd.ExecuteNonQueryAsync();
+            ShowToast("Announcement removed.");
+            await LoadAnnouncements();
+        } catch { }
+    }
+
+    private void CloseModal() { showModal = false; newTitle = ""; newMessage = ""; isUrgent = false; }
+
+    private void ShowToast(string msg) {
+        statusMessage = msg;
+        StateHasChanged();
+        Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task<bool> CheckAccess(string module) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT su.IsEnabled FROM Organizations o JOIN SystemUpdates su ON o.PlanType = su.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn); cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@mod", module);
+            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    public class AnnouncementModel {
+        public int Id { get; set; }
+        public string Title { get; set; } = "";
+        public string Message { get; set; } = "";
+        public bool IsUrgent { get; set; }
+        public string PostedBy { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    /* PAGE CONTAINER */
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; width: 100%; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
+    .page-header h1 { font-size: 32px; font-weight: 800; margin: 0; color: #111827; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+
+    .header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+    .btn-post { font-size: 15px; background: #111827; color: white; border: none; padding: 8px 17px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-post:hover { background: #000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+    .search-input-sub { padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; width: 250px; outline: none; transition: 0.2s; background: white; }
+    .search-input-sub:focus { border-color: #111827; }
+
+    .announcement-feed { display: flex; flex-direction: column; gap: 20px; width: 100%; }
+    .empty-state { text-align: center; padding: 80px; background: white; border: 1px dashed #d1d5db; border-radius: 16px; color: #9ca3af; width: 100%; }
+
+    .announcement-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; transition: 0.3s ease; position: relative; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.02); width: 100%; }
+    .announcement-card:hover { transform: translateY(-3px); box-shadow: 0 12px 24px rgba(0,0,0,0.06); border-color: #d1d5db; }
+    
+    .standard-accent { border-left: 6px solid #14b8a6; } 
+    .urgent-accent { border-left: 6px solid #dc2626; }   
+
+    .card-top { padding: 24px; }
+    .title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .title-group { display: flex; align-items: center; gap: 12px; }
+    .card-title { font-size: 18px; font-weight: 700; color: #111827; margin: 0; }
+    .badge-urgent { background: #fee2e2; color: #dc2626; font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 6px; }
+    .date-info { font-size: 13px; color: #9ca3af; font-weight: 500; }
+    .card-body-text { font-size: 15px; color: #4b5563; line-height: 1.6; }
+
+    .card-footer { padding: 16px 24px; border-top: 1px solid #f3f4f6; background: #fafafa; display: flex; justify-content: space-between; align-items: center; }
+    .posted-by { font-size: 12px; font-weight: 600; color: #9ca3af; }
+    .btn-delete { background: none; border: none; color: #ef4444; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+    /* Custom Confirmation Styles */
+    .confirm-icon { font-size: 32px; margin-bottom: 10px; }
+    .btn-danger-action { background: #dc2626; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-danger-action:hover { background: #b91c1c; }
+
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 500px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .form-input { width: 100%; padding: 12px; margin-top: 6px; margin-bottom: 18px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+    label { font-size: 13px; font-weight: 700; color: #374151; }
+    .urgent-toggle-row { display:flex; align-items:center; gap:12px; margin-bottom:20px; background:#f9fafb; padding:12px; border-radius:8px; border: 1px solid #eee; }
+    .btn-outline { background: white; border: 1px solid #e5e7eb; padding: 12px; border-radius: 10px; font-weight: 600; cursor: pointer; }
+
+    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
+</style>```

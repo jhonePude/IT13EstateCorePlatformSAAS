@@ -1,0 +1,381 @@
+@page "/tenant-promos"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using System.Globalization
+@using IT13EstateCorePlatformMauiBlzaor.Data
+@inject NavigationManager Nav
+
+@if (isChecking)
+{
+    <p style="padding:40px; text-align:center; font-family:'Inter',sans-serif;">Verifying access...</p>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1000px; width: 100%; height: auto;" />
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="status-toast">@statusMessage</div>
+    }
+
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Community & Feedback</h1>
+                <p class="subtitle">Explore active deals and share your experience with <strong>@Login.LoggedInOrgName</strong>.</p>
+            </div>
+
+            <div class="header-right-group">
+                <label for="tenantPicUpload" class="user-profile-btn">
+                    <div class="profile-info" style="text-align: right;">
+                        <span class="profile-name">@Login.LoggedInName</span>
+                        <span class="profile-role">Resident</span>
+                    </div>
+                    <div class="avatar-circle">
+                        @if (!string.IsNullOrEmpty(profilePicBase64))
+                        {
+                            <img src="@profilePicBase64" />
+                        }
+                        else
+                        {
+                            <span>@(string.IsNullOrEmpty(Login.LoggedInName) ? "T" : Login.LoggedInName.Substring(0, 1).ToUpper())</span>
+                        }
+                    </div>
+                    <InputFile id="tenantPicUpload" OnChange="HandleFileSelected" style="display:none;" />
+                </label>
+            </div>
+        </header>
+
+        <div class="tab-container">
+            <button class="tab-btn @(ActiveTab == 1 ? "active" : "")" @onclick="() => SwitchTab(1)">Active Promotions</button>
+            <button class="tab-btn @(ActiveTab == 2 ? "active" : "")" @onclick="() => SwitchTab(2)">Share Feedback</button>
+        </div>
+
+        @if (ActiveTab == 1)
+        {
+            <div class="promos-grid">
+                @if (!promotions.Any())
+                {
+                    <div class="empty-state" style="grid-column: span 3;">
+                        <span class="empty-icon">🏷️</span>
+                        <p>No active promotions at the moment.</p>
+                    </div>
+                }
+                @foreach (var promo in promotions)
+                {
+                    <div class="new-promo-card">
+                        <div class="promo-accent-bar"></div>
+                        <div class="promo-content">
+                            <div class="promo-header">
+                                <div class="promo-tag">Exclusive Deal</div>
+                                <span class="promo-icon">🎁</span>
+                            </div>
+                            <h3 class="promo-title">@promo.Title</h3>
+                            <p class="promo-description">@promo.Description</p>
+                            
+                            <div class="promo-footer-area">
+                                <div class="promo-code-section">
+                                    <span class="label">USE CODE</span>
+                                    <span class="code">@promo.PromoCode</span>
+                                </div>
+                                <div class="promo-expiry-badge">
+                                    Ends: @promo.ExpiryDate.ToString("MMM dd")
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="feedback-split">
+                <div class="content-card">
+                    <h2 class="section-title">Rate our Facilities</h2>
+                    <p class="section-subtitle">Your feedback helps us improve your living experience.</p>
+                    <div class="form-group">
+                        <label>Facility Visited</label>
+                        <select @bind="newFeedback.FacilityName" class="form-control">
+                            <option value="">-- Select Facility --</option>
+                            <option value="Suite">Suite</option>
+                            <option value="Residence">Residence</option>
+                            <option value="Guestroom">Guest Room</option>
+                            <option value="Clubhouse">Clubhouse</option>
+                            <option value="Gym">Fitness Center/Gym</option>
+                            <option value="Swimming Pool">Swimming Pool</option>
+                            <option value="Parking">Parking Space</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Your Rating: <span class="rating-text-label">@GetRatingLabel(newFeedback.Rating)</span></label>
+                        <div class="star-picker-container" @onmouseleave="HandleMouseOut">
+                            @for (int i = 1; i <= 5; i++)
+                            {
+                                int starValue = i;
+                                <span class="star-picker-item @(starValue <= (hoverRating > 0 ? hoverRating : newFeedback.Rating) ? "active" : "")" @onclick="() => SetRating(starValue)" @onmouseenter="() => HandleHover(starValue)">★</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Comments</label>
+                        <textarea @bind="newFeedback.Comments" placeholder="Tell us about your experience..." class="form-control textarea"></textarea>
+                    </div>
+                    <button class="btn-black" style="width:100%; margin-top:10px;" @onclick="TriggerFeedbackConfirm">Submit Feedback</button>
+                </div>
+
+                <div class="content-card">
+                    <h2 class="section-title">My Past Reviews</h2>
+                    <p class="section-subtitle">History of feedback submitted by you.</p>
+                    <div class="history-scroll">
+                        @if (!myFeedbackHistory.Any())
+                        {
+                            <p style="color:gray; font-size:13px; text-align:center; padding-top:20px;">You haven't submitted any reviews yet.</p>
+                        }
+                        @foreach (var fb in myFeedbackHistory)
+                        {
+                            <div class="history-item">
+                                <div class="item-header">
+                                    <span class="facility-tag">@fb.FacilityName</span>
+                                    <div class="stars-row">
+                                        @for (int i = 1; i <= 5; i++) { <span class="star @(i <= fb.Rating ? "active" : "")">★</span> }
+                                    </div>
+                                </div>
+                                <p class="history-comment">"@fb.Comments"</p>
+                                <span class="history-date">@fb.CreatedAt.ToString("MMM dd, yyyy")</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+@if (showConfirmModal)
+{
+    <div class="modal-backdrop" style="z-index: 10000;">
+        <div class="modal-content" style="width: 400px; text-align: center;">
+            <div class="confirm-icon" style="font-size: 32px; margin-bottom: 10px;">⭐</div>
+            <h3 style="margin-top: 10px; font-weight: 800;">Submit Review?</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                Are you sure you want to post this <b>@newFeedback.Rating-star</b> rating for the <b>@newFeedback.FacilityName</b>?
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-outline-custom" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="btn-black" style="flex:1;" @onclick="ExecuteSubmitFeedback">Yes, Submit</button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private int ActiveTab = 1, hoverRating = 0;
+    private bool isChecking = true, hasAccess = true;
+    private string _conn = DbConfig.ConnectionString;
+    private string statusMessage = "", profilePicBase64 = "";
+    private FeedbackModel newFeedback = new() { Rating = 5 };
+    private List<PromotionModel> promotions = new();
+    private List<FeedbackModel> myFeedbackHistory = new();
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+
+    private void SetRating(int val) => newFeedback.Rating = val;
+    private void HandleHover(int val) => hoverRating = val;
+    private void HandleMouseOut() => hoverRating = 0;
+    private string GetRatingLabel(int val) => val switch { 5 => "Excellent", 4 => "Very Good", 3 => "Average", 2 => "Poor", 1 => "Terrible", _ => "Select" };
+
+    protected override async Task OnInitializedAsync() {
+        if (Login.LoggedInTenantId == null) { Nav.NavigateTo("/login"); return; }
+        hasAccess = await CheckModuleAccess("Feedback");
+        if (hasAccess) { 
+            await LoadData(); 
+            await LoadProfilePic(); 
+        }
+        isChecking = false;
+    }
+
+    private async Task<bool> CheckModuleAccess(string mod) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId); cmd.Parameters.AddWithValue("@mod", mod);
+            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    private async Task LoadData() {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        if (ActiveTab == 1) {
+            promotions.Clear();
+            string pSql = "SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = @oid AND ExpiryDate >= CAST(GETDATE() AS DATE) ORDER BY CreatedAt DESC";
+            using SqlCommand cmd = new(pSql, conn); cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync()) promotions.Add(new PromotionModel { Title = r.GetString(0), Description = r.GetString(1), PromoCode = r.GetString(2), ExpiryDate = r.GetDateTime(3) });
+        } else {
+            myFeedbackHistory.Clear();
+            string fSql = "SELECT FacilityName, Rating, Comments, CreatedAt FROM Feedback WHERE TenantId = @tid ORDER BY CreatedAt DESC";
+            using SqlCommand cmd = new(fSql, conn); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync()) myFeedbackHistory.Add(new FeedbackModel { FacilityName = r.GetString(0), Rating = r.GetInt32(1), Comments = r.GetString(2), CreatedAt = r.GetDateTime(3) });
+        }
+        StateHasChanged();
+    }
+
+    private void TriggerFeedbackConfirm() {
+        if (string.IsNullOrEmpty(newFeedback.FacilityName)) return;
+        showConfirmModal = true;
+    }
+
+    private async Task ExecuteSubmitFeedback() {
+        showConfirmModal = false;
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "INSERT INTO Feedback (OrganizationId, FacilityName, Rating, Comments, TenantId, CreatedAt) VALUES (@oid, @f, @r, @c, @tid, GETDATE())";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId); cmd.Parameters.AddWithValue("@f", newFeedback.FacilityName);
+            cmd.Parameters.AddWithValue("@r", newFeedback.Rating); cmd.Parameters.AddWithValue("@c", newFeedback.Comments ?? "");
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId); 
+            await cmd.ExecuteNonQueryAsync();
+            
+            newFeedback = new FeedbackModel { Rating = 5 }; 
+            await LoadData(); 
+            ShowToast("Feedback submitted!");
+        } catch { }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e) {
+        var file = e.File; if (file == null) return;
+        var resized = await file.RequestImageFileAsync("image/png", 300, 300);
+        var buffer = new byte[resized.Size];
+        using var stream = resized.OpenReadStream(); await stream.ReadAsync(buffer);
+        profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task LoadProfilePic() {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+        profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+    }
+
+    private async Task SwitchTab(int tab) { ActiveTab = tab; await LoadData(); }
+    private void ShowToast(string msg) { statusMessage = msg; StateHasChanged(); Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); }); }
+    public class FeedbackModel { public string FacilityName { get; set; } = ""; public int Rating { get; set; } public string Comments { get; set; } = ""; public DateTime CreatedAt { get; set; } }
+    public class PromotionModel { public string Title { get; set; } = ""; public string Description { get; set; } = ""; public string PromoCode { get; set; } = ""; public DateTime ExpiryDate { get; set; } }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header-left h1 { font-size: 28px; font-weight: 800; color: #111827; margin: 0; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+    
+    .header-right-group { display: flex; align-items: center; gap: 20px; }
+    .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 8px 15px; border-radius: 12px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; }
+    .user-profile-btn:hover { background: #f1f5f9; }
+    .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; border: 2px solid #d4af37; }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-name { font-weight: 700; font-size: 14px; color: #111827; display: block; }
+    .profile-role { font-size: 10px; color: #d4af37; text-transform: uppercase; font-weight: 800; }
+
+    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
+    .tab-container { display: inline-flex; background: #f3f4f6; padding: 4px; border-radius: 10px; margin-bottom: 30px; }
+    .tab-btn { padding: 10px 24px; border: none; background: transparent; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; color: #6b7280; }
+    .tab-btn.active { background: #fff; color: #111827; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+
+    .promos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .new-promo-card { background: white; border-radius: 20px; overflow: hidden; position: relative; border: 1px solid #e5e7eb; transition: 0.3s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+    .new-promo-card:hover { transform: translateY(-5px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+    .promo-accent-bar { height: 6px; background: linear-gradient(90deg, #d4af37, #f59e0b); }
+    .promo-content { padding: 25px; }
+    .promo-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .promo-tag { background: #fef3c7; color: #b45309; font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 4px 10px; border-radius: 6px; }
+    .promo-icon { font-size: 20px; }
+    .promo-title { font-size: 18px; font-weight: 800; color: #111827; margin: 0 0 8px 0; }
+    .promo-description { font-size: 13px; color: #64748b; line-height: 1.5; margin-bottom: 20px; height: 40px; overflow: hidden; }
+    .promo-footer-area { display: flex; flex-direction: column; gap: 15px; }
+    .promo-code-section { background: #f8fafc; border: 2px dashed #e2e8f0; padding: 12px; border-radius: 12px; text-align: center; }
+    .promo-code-section .label { display: block; font-size: 9px; font-weight: 800; color: #94a3b8; margin-bottom: 2px; }
+    .promo-code-section .code { font-family: 'Inter', monospace; font-weight: 800; font-size: 16px; color: #111827; letter-spacing: 1px; }
+    .promo-expiry-badge { font-size: 11px; font-weight: 700; color: #e11d48; text-align: center; }
+
+    .feedback-split { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+    .content-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 30px; }
+    .section-title { font-size: 18px; font-weight: 800; color: #111827; margin: 0; }
+    .form-group { margin-bottom: 20px; }
+    .form-control { width: 100%; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; }
+    .star-picker-item { font-size: 30px; color: #e5e7eb; cursor: pointer; }
+    .star-picker-item.active { color: #f59e0b; }
+    .history-scroll { max-height: 450px; overflow-y: auto; }
+    .history-item { padding: 20px 0; border-bottom: 1px solid #f1f5f9; }
+    .star { color: #e2e8f0; font-size: 14px; }
+    .star.active { color: #f59e0b; }
+    .btn-black { background: #111827; color: #fff; border: none; padding: 14px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-black:hover { background: #000; transform: translateY(-1px); }
+    .empty-state { text-align: center; padding: 60px; background: white; border: 1px dashed #e5e7eb; border-radius: 16px; color: #94a3b8; }
+
+    /* Custom Confirm Styles */
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .btn-outline-custom { background: white; border: 1px solid #e5e7eb; padding: 12px; border-radius: 10px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .btn-outline-custom:hover { background: #f8f9fa; }
+</style>

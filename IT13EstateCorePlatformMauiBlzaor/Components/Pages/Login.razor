@@ -1,0 +1,176 @@
+@page "/login"
+@using Microsoft.Data.SqlClient
+@inject NavigationManager Navigation
+@using System.Data
+
+<div class="full-screen-wrapper">
+    <div class="bg-overlay"></div>
+    <div class="login-card">
+        <div class="brand-header">
+            <div class="logo-animation-wrapper">
+                <img src="logo.png" alt="Logo" class="floating-logo" />
+            </div>
+            <h1 class="login-title">Estate Core <span>Platform</span></h1>
+            <p class="login-tagline">UNIFIED COMMUNITY & ESTATE MANAGEMENT</p>
+        </div>
+
+        <div class="login-form">
+            <div class="form-item">
+                <label>Email / Username</label>
+                <input type="text" @bind="Username" placeholder="Enter your email or username" />
+            </div>
+
+            <div class="form-item">
+                <label>Password</label>
+                <div class="password-wrapper">
+                    <input type="@(ShowPassword ? "text" : "password")" @bind="Password" placeholder="Password" />
+                    <button type="button" class="eye-toggle-btn" @onclick="TogglePassword">
+                        @if (ShowPassword) {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.82l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.74-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg>
+                        } else {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            <button class="login-submit-btn" @onclick="HandleLogin">Sign In</button>
+
+            @if (!string.IsNullOrEmpty(ErrorMessage)) {
+                <div class="error-message">@ErrorMessage</div>
+            }
+        </div>
+
+        <div class="login-footer">
+            <p>&copy; 2026 Estate Core Platform. All rights reserved.</p>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    public static int LoggedInOrgId { get; set; }
+    public static int? LoggedInTenantId { get; set; } // Track specific resident
+    public static string LoggedInName { get; set; } = "";
+    public static string LoggedInRole { get; set; } = "";
+    public static string LoggedInOrgName { get; set; } = "";
+
+    private string Username { get; set; } = "";
+    private string Password { get; set; } = "";
+    private string? ErrorMessage { get; set; }
+    private bool ShowPassword { get; set; } = false;
+
+    private string _connectionString = @"Server=jhone_puca\sqlexpress;Database=EstateCoreDB;Trusted_Connection=True;TrustServerCertificate=True;";
+
+    private void TogglePassword() => ShowPassword = !ShowPassword;
+
+    private async Task HandleLogin() {
+        ErrorMessage = null;
+        if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Password)) {
+            ErrorMessage = "Please enter credentials.";
+            return;
+        }
+
+        try {
+            using (SqlConnection conn = new SqlConnection(_connectionString)) {
+                await conn.OpenAsync();
+
+                // 1. CHECK STAFF/ADMIN TABLE FIRST
+                string adminSql = "SELECT Role, OrganizationId, FullName FROM [Login] WHERE Username = @user AND Password = @pass AND IsActive = 1";
+                using (SqlCommand cmd = new SqlCommand(adminSql, conn)) {
+                    cmd.Parameters.AddWithValue("@user", Username.Trim());
+                    cmd.Parameters.AddWithValue("@pass", Password.Trim());
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync()) {
+                        if (await reader.ReadAsync()) {
+                            LoggedInRole = reader.GetString(0);
+                            LoggedInOrgId = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+                            LoggedInName = reader.GetString(2);
+                            LoggedInTenantId = null;
+                            RedirectUser();
+                            return;
+                        }
+                    }
+                }
+
+                // 2. CHECK TENANTS TABLE (Username = Email)
+                string tenantSql = @"SELECT t.Id, t.OrganizationId, t.FullName, o.Name 
+                                     FROM Tenants t 
+                                     JOIN Organizations o ON t.OrganizationId = o.OrganizationId
+                                     WHERE t.Email = @email AND t.Password = @pass AND t.Status = 'Active'";
+                using (SqlCommand cmd = new SqlCommand(tenantSql, conn)) {
+                    cmd.Parameters.AddWithValue("@email", Username.Trim());
+                    cmd.Parameters.AddWithValue("@pass", Password.Trim());
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync()) {
+                        if (await reader.ReadAsync()) {
+                            LoggedInTenantId = reader.GetInt32(0);
+                            LoggedInOrgId = reader.GetInt32(1);
+                            LoggedInName = reader.GetString(2);
+                            LoggedInOrgName = reader.GetString(3);
+                            LoggedInRole = "Tenant";
+                            Navigation.NavigateTo("/tenant-dashboard", forceLoad: true);
+                            return;
+                        }
+                    }
+                }
+                ErrorMessage = "Invalid credentials.";
+            }
+        } catch (Exception ex) { ErrorMessage = "Error: " + ex.Message; }
+    }
+
+    private void RedirectUser() {
+        if (LoggedInRole == "SuperAdmin") Navigation.NavigateTo("/super-dashboard", forceLoad: true);
+        else Navigation.NavigateTo("/admin-dashboard", forceLoad: true);
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    /* (Styles remain same as your original login css) */
+    :root { --brand-gold: #d4af37; --brand-teal: #14b8a6; }
+    .full-screen-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; background: url('Gemini_Generated_Image_nrzhjnrzhjnrzhjn.png') no-repeat center center fixed; background-size: cover; z-index: 999; }
+    .bg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.6); z-index: 1; }
+    .login-card { position: relative; z-index: 2; width: 100%; max-width: 420px; background-color: rgba(30, 41, 59, 0.9); backdrop-filter: blur(12px); border-radius: 16px; padding: 40px; border-top: 4px solid var(--brand-gold); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); }
+    .password-wrapper { position: relative; width: 100%; display: flex; align-items: center; }
+    .eye-toggle-btn { position: absolute; right: 12px; background: none; border: none; color: white; cursor: pointer; opacity: 0.7; z-index: 5; }
+    .brand-header { text-align: center; margin-bottom: 30px; }
+    .login-title { color: #ffffff; font-size: 26px; font-weight: 700; }
+    .login-title span { color: var(--brand-gold); }
+    .login-tagline { color: #94a3b8; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 10px; }
+    .form-item { display: flex; flex-direction: column; gap: 8px; margin-bottom: 15px; }
+    .form-item label { color: #f1f5f9; font-size: 14px; }
+    .form-item input { width: 100%; padding: 14px; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; box-sizing: border-box; }
+    .login-submit-btn { width: 100%; padding: 16px; background: var(--brand-teal); color: white; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+    .error-message { background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 12px; border-radius: 8px; font-size: 13px; text-align: center; margin-top: 12px; }
+    .login-footer p { color: #64748b; font-size: 11px; text-align: center; margin-top: 20px; }
+    .floating-logo { width: 90px; margin-bottom: 20px; animation: floatEffect 4s ease-in-out infinite; }
+    @@keyframes floatEffect { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-15px); } }
+</style>

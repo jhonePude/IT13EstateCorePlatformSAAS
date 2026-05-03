@@ -1,0 +1,390 @@
+@page "/admin-dashboard"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using System.Globalization
+@using IT13EstateCorePlatformMauiBlzaor.Data
+@inject NavigationManager Nav
+
+@if (isChecking)
+{
+    <div style="padding:40px; text-align:center; font-family:'Inter',sans-serif;">
+        <p>Verifying module access...</p>
+    </div>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1100px; width: 100%; height: auto;" />
+    </div>
+}
+else
+{
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Admin Dashboard</h1>
+                <p class="subtitle">@(Login.LoggedInOrgName ?? "Property") Management Overview</p>
+            </div>
+            
+            <label for="adminPicUpload" class="user-profile-btn">
+                <div class="profile-info" style="text-align: right;">
+                    <span class="profile-name">@Login.LoggedInName</span>
+                    <span class="profile-role">@Login.LoggedInRole</span>
+                </div>
+                <div class="avatar-circle">
+                    @if (!string.IsNullOrEmpty(profilePicBase64))
+                    {
+                        <img src="@profilePicBase64" />
+                    }
+                    else
+                    {
+                        <span>@(string.IsNullOrEmpty(Login.LoggedInName) ? "A" : Login.LoggedInName.Substring(0, 1).ToUpper())</span>
+                    }
+                </div>
+                <InputFile id="adminPicUpload" OnChange="HandleFileSelected" style="display:none;" />
+            </label>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fcd34d;">
+                <div class="stat-header"><span>Total Revenue</span><span class="stat-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d4af37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #92400e;"><span class="peso-bold" style="color: #92400e; font-weight: 800;">₱</span>@revenue.ToString("N2")</h2>
+                    <p class="stat-sub" style="color: #78350f;">Actual payments received</p>
+                </div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-color: #c7d2fe;">
+                <div class="stat-header"><span>Active Residents</span><span class="stat-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #4338ca;">@activeResidents</h2>
+                    <p class="stat-sub" style="color: #3730a3;">Across all registered units</p>
+                </div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fde68a;">
+                <div class="stat-header"><span>Maintenance Tasks</span><span class="stat-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12(0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #92400e;">@totalMaintenance</h2>
+                    <p class="stat-sub" style="color: #78350f;">@pendingMaintenance pending requests</p>
+                </div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%); border-color: #99f6e4;">
+                <div class="stat-header"><span>Reservations</span><span class="stat-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #0f766e;">@totalReservations</h2>
+                    <p class="stat-sub" style="color: #115e59;">@pendingReservations pending approval</p>
+                </div>
+            </div>
+        </div>
+
+        @* PROFESSIONAL RISING GRAPH SECTION - FULL WIDTH VERSION *@
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title-group">
+                   <h3>Revenue Collection Trend   <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></h3>
+                    
+                    <p>Accumulated payments over time (Blue line represents growth)</p>
+                </div>
+                <div class="chart-legend">
+                    <span class="legend-dot"></span> Cumulative Revenue (₱)
+                </div>
+            </div>
+            <div class="chart-container" style="position: relative;">
+                @if (points.Any())
+                {
+                    <svg viewBox="0 0 1000 350" class="revenue-graph" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.2" />
+                                <stop offset="100%" stop-color="#4f46e5" stop-opacity="0" />
+                            </linearGradient>
+                        </defs>
+
+                        @* Grid Lines - Full width from 70 to 995 *@
+                        <line x1="70" y1="50" x2="995" y2="50" stroke="#f1f5f9" stroke-width="1" />
+                        <line x1="70" y1="150" x2="995" y2="150" stroke="#f1f5f9" stroke-width="1" />
+                        <line x1="70" y1="250" x2="995" y2="250" stroke="#e2e8f0" stroke-width="1.5" />
+
+                        @* Y-Axis Labels - Tucked tightly to the left *@
+                        @((MarkupString)$@"
+                            <text x=""60"" y=""50"" text-anchor=""end"" dominant-baseline=""middle"" class=""axis-label"">₱{maxRevenue.ToString("N0")}</text>
+                            <text x=""60"" y=""150"" text-anchor=""end"" dominant-baseline=""middle"" class=""axis-label"">₱{(maxRevenue / 2).ToString("N0")}</text>
+                            <text x=""60"" y=""250"" text-anchor=""end"" dominant-baseline=""middle"" class=""axis-label"">0</text>
+                        ")
+
+                        @* X-Axis Labels (Dates) *@
+                        @foreach (var label in xLabels)
+                        {
+                            @((MarkupString)$@"<text x=""{label.X}"" y=""285"" text-anchor=""middle"" class=""axis-label month"">{label.Text}</text>")
+                        }
+
+                        @* Area fill - Indigo gradient *@
+                        <path d="@areaPath" fill="url(#blueGrad)" />
+                        
+                        @* Blue rising line - indigo color *@
+                        <path d="@linePath" fill="none" stroke="#4f46e5" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+                        
+                        @* Interactive Point Circles *@
+                        @foreach (var p in points)
+                        {
+                            <circle cx="@(p.X)" cy="@(p.Y)" r="15" fill="#4f46e5" fill-opacity="0" 
+                                    style="cursor:pointer; pointer-events: all;"
+                                    @onmouseover="@(e => ShowTooltip(e, p))" 
+                                    @onmouseout="HideTooltip" />
+                            <circle cx="@(p.X)" cy="@(p.Y)" r="5" fill="white" stroke="#4f46e5" stroke-width="2.5" style="pointer-events: none;" />
+                        }
+                    </svg>
+
+                    <div class="chart-tooltip" style="display: @tooltipDisplay; left: @(tooltipX)px; top: @(tooltipY)px;">
+                        <span class="tooltip-val">₱@tooltipText</span>
+                    </div>
+                }
+                else
+                {
+                    <div style="padding: 60px; text-align:center; color: #94a3b8; font-size: 14px;">
+                        <p>No recorded payments to display growth chart.</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = false;
+    private string _conn = DbConfig.ConnectionString;
+    private int myOrgId => Login.LoggedInOrgId;
+    private CultureInfo nph = new CultureInfo("en-PH");
+    private string? profilePicBase64;
+
+    private decimal revenue = 0, maxRevenue = 0; 
+    private int activeResidents = 0, totalMaintenance = 0, pendingMaintenance = 0, totalReservations = 0, pendingReservations = 0;
+
+    private List<Coord> points = new();
+    private List<Label> xLabels = new();
+    private string linePath = "", areaPath = "";
+
+    private string tooltipDisplay = "none", tooltipText = "";
+    private double tooltipX = 0, tooltipY = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try {
+            if (myOrgId == 0 && Login.LoggedInRole != "SuperAdmin") { Nav.NavigateTo("/login"); return; }
+            if (string.IsNullOrEmpty(Login.LoggedInOrgName)) await LoadOrganizationName();
+            hasAccess = await CheckAccess("Dashboard");
+            if (hasAccess) {
+                await LoadDashboardStats();
+                await LoadProfilePic();
+                await LoadGraphData();
+            }
+        } catch { }
+        finally { isChecking = false; }
+    }
+
+    private void ShowTooltip(MouseEventArgs e, Coord p)
+    {
+        tooltipX = e.OffsetX;
+        tooltipY = e.OffsetY - 50;
+        tooltipText = p.Val.ToString("N2");
+        tooltipDisplay = "block";
+    }
+    private void HideTooltip() => tooltipDisplay = "none";
+
+    private async Task LoadGraphData()
+    {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "SELECT Amount, CreatedAt FROM Billings WHERE OrganizationId = @oid AND Status = 'PAID' ORDER BY CreatedAt ASC";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@oid", myOrgId);
+        
+        List<(decimal val, DateTime date)> raw = new();
+        decimal cumulative = 0;
+        using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+        {
+            cumulative += r.GetDecimal(0);
+            raw.Add((cumulative, r.GetDateTime(1)));
+        }
+
+        if (raw.Any())
+        {
+            maxRevenue = raw.Max(x => x.val);
+            if (maxRevenue == 0) maxRevenue = 1;
+
+            points.Clear();
+            xLabels.Clear();
+
+            // Refined offsets: offsetX is the start (left), chartWidth spans to the very edge (995)
+            float startX = 70; 
+            float endX = 995;
+            float chartWidth = endX - startX; 
+            float chartHeight = 200; 
+            float baselineY = 250; 
+
+            for (int i = 0; i < raw.Count; i++)
+            {
+                float x = startX + (i * (chartWidth / (raw.Count > 1 ? raw.Count - 1 : 1)));
+                float y = baselineY - ((float)(raw[i].val / maxRevenue) * chartHeight);
+                points.Add(new Coord { X = x, Y = y, Val = raw[i].val });
+
+                if (i == 0 || i == raw.Count - 1 || raw[i].date.Month != raw[i-1].date.Month)
+                {
+                    string labelTxt = raw[i].date.ToString("MMM dd");
+                    if (xLabels.All(l => l.Text != labelTxt))
+                        xLabels.Add(new Label { X = x, Text = labelTxt });
+                }
+            }
+
+            linePath = "M " + string.Join(" L ", points.Select(p => $"{p.X},{p.Y}"));
+            areaPath = linePath + $" L {points.Last().X},250 L {startX},250 Z";
+        }
+    }
+
+    private async Task LoadDashboardStats()
+    {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = @"SELECT 
+            (SELECT ISNULL(SUM(Amount), 0) FROM Billings WHERE OrganizationId = @oid AND Status = 'PAID'),
+            (SELECT COUNT(*) FROM Tenants WHERE OrganizationId = @oid AND Status = 'Active'),
+            (SELECT COUNT(*) FROM MaintenanceRequests WHERE OrganizationId = @oid),
+            (SELECT COUNT(*) FROM MaintenanceRequests WHERE OrganizationId = @oid AND Status = 'PENDING'),
+            (SELECT COUNT(*) FROM Reservations WHERE OrganizationId = @oid),
+            (SELECT COUNT(*) FROM Reservations WHERE OrganizationId = @oid AND Status = 'PENDING')";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@oid", myOrgId);
+        using var r = await cmd.ExecuteReaderAsync();
+        if (await r.ReadAsync()) {
+            revenue = r.GetDecimal(0); activeResidents = r.GetInt32(1);
+            totalMaintenance = r.GetInt32(2); pendingMaintenance = r.GetInt32(3);
+            totalReservations = r.GetInt32(4); pendingReservations = r.GetInt32(5);
+        }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File; if (file == null) return;
+        var resized = await file.RequestImageFileAsync("image/png", 300, 300);
+        var buffer = new byte[resized.Size];
+        using var stream = resized.OpenReadStream(); await stream.ReadAsync(buffer);
+        profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "UPDATE [Login] SET ProfilePicture = @pic WHERE FullName = @name AND OrganizationId = @oid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@pic", profilePicBase64);
+        cmd.Parameters.AddWithValue("@name", Login.LoggedInName);
+        cmd.Parameters.AddWithValue("@oid", myOrgId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task LoadProfilePic()
+    {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "SELECT ProfilePicture FROM [Login] WHERE FullName = @name AND OrganizationId = @oid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@name", Login.LoggedInName);
+        cmd.Parameters.AddWithValue("@oid", myOrgId);
+        var res = await cmd.ExecuteScalarAsync();
+        profilePicBase64 = res?.ToString();
+    }
+
+    private async Task LoadOrganizationName()
+    {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        using SqlCommand cmd = new("SELECT Name FROM Organizations WHERE OrganizationId = @id", conn);
+        cmd.Parameters.AddWithValue("@id", myOrgId);
+        Login.LoggedInOrgName = (await cmd.ExecuteScalarAsync())?.ToString() ?? "Manager";
+    }
+
+    private async Task<bool> CheckAccess(string m) {
+        if (Login.LoggedInRole == "SuperAdmin") return true;
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "SELECT su.IsEnabled FROM Organizations o JOIN SystemUpdates su ON o.PlanType = su.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+        using SqlCommand cmd = new(sql, conn); cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@mod", m);
+        var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+    }
+
+    private class Coord { public float X { get; set; } public float Y { get; set; } public decimal Val { get; set; } }
+    private class Label { public float X { get; set; } public string Text { get; set; } = ""; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
+    .page-header h1 { font-size: 30px; font-weight: 800; margin: 0; color: #111827; letter-spacing: -0.5px; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+    
+    .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 6px 15px; border-radius: 14px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .user-profile-btn:hover { background: #f9fafb; border-color: #d1d5db; }
+    .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; overflow: hidden; border: 2px solid #fff; box-shadow: 0 0 0 2px #e5e7eb; }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-info { text-align: right; }
+    .profile-name { display: block; font-weight: 700; font-size: 14px; color: #111827; }
+    .profile-role { font-size: 10px; color: #6366f1; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 30px; }
+    .stat-card { background: white; border: 1px solid #e5e7eb; border-radius: 20px; padding: 24px; transition: 0.3s; }
+    .stat-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px rgba(0,0,0,0.06); }
+    .stat-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+    .stat-value { font-size: 28px; font-weight: 800; color: #111827; margin: 12px 0 0 0; letter-spacing: -1px; }
+    .stat-sub { color: #6b7280; font-size: 13px; margin-top: 4px; }
+    .peso-bold { font-family: "Arial", sans-serif; }
+    
+    .chart-card { background: white; border: 1px solid #e5e7eb; border-radius: 24px; padding: 30px; margin-top: 10px; }
+    .chart-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; }
+    .chart-header h3 { margin: 0; font-size: 18px; font-weight: 800; color: #111827; }
+    .chart-header p { color: #6b7280; font-size: 13px; margin: 5px 0 0 0; }
+    .chart-legend { font-size: 12px; font-weight: 700; color: #64748b; display: flex; align-items: center; gap: 8px; }
+    .legend-dot { width: 10px; height: 10px; background: #4f46e5; border-radius: 50%; display: inline-block; }
+
+    .chart-container { width: 100%; height: 380px; padding-bottom: 0px; }
+    .revenue-graph { width: 100%; height: 100%; overflow: visible; }
+    
+    .axis-label { font-size: 11px; fill: #94a3b8; font-weight: 700; font-family: 'Inter', sans-serif; }
+    .axis-label.month { fill: #64748b; }
+
+    .chart-tooltip {
+        position: absolute;
+        background: #111827;
+        color: white;
+        padding: 10px 16px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 700;
+        pointer-events: none;
+        z-index: 100;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        transform: translateX(-50%);
+        white-space: nowrap;
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+</style>

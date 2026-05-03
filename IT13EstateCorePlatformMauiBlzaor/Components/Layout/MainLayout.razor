@@ -1,0 +1,32 @@
+﻿@inherits LayoutComponentBase
+
+<div class="main-layout">
+    <SuperSideNav />
+    <main class="main-content">
+        @Body
+    </main>
+</div>
+
+<style>
+    :root {
+        --sidebar-width: 260px;
+    }
+
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+    }
+
+    .main-layout {
+        display: flex;
+        min-height: 100vh;
+    }
+
+    .main-content {
+        flex: 1;
+        margin-left: var(--sidebar-width);
+        width: calc(100% - var(--sidebar-width));
+        min-height: 100vh;
+    }
+</style>

@@ -1,0 +1,501 @@
+@page "/tenant-dashboard"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using System.Globalization
+@using IT13EstateCorePlatformMauiBlzaor.Data
+@inject NavigationManager Nav
+
+@if (isChecking)
+{
+    <p style="padding:40px; text-align:center;">Verifying access...</p>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1000px; width: 100%; height: auto;" />
+    </div>
+}
+else
+{
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Welcome back, @Login.LoggedInName!</h1>
+                <p class="subtitle">@Login.LoggedInOrgName • Resident of @unitNumber</p>
+            </div>
+
+            <div class="header-right-group">
+                <div class="date-display">                                                       
+                    <span class="day">@DateTime.Now.ToString("dd")</span>
+                    <div class="month-year">
+                        <span>@DateTime.Now.ToString("MMMM")</span>
+                        <span>@DateTime.Now.ToString("yyyy")</span>
+                    </div>
+                </div>
+
+                <label for="tenantPicUpload" class="user-profile-btn">
+                    <div class="profile-info" style="text-align: right;">
+                        <span class="profile-name">@Login.LoggedInName</span>
+                        <span class="profile-role">Resident</span>
+                    </div>
+                    <div class="avatar-circle">
+                        @if (!string.IsNullOrEmpty(profilePicBase64))
+                        {
+                            <img src="@profilePicBase64" />
+                        }
+                        else
+                        {
+                            <span>@(string.IsNullOrEmpty(Login.LoggedInName) ? "T" : Login.LoggedInName.Substring(0, 1).ToUpper())</span>
+                        }
+                    </div>
+                    <InputFile id="tenantPicUpload" OnChange="HandleFileSelected" style="display:none;" />
+                </label>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fcd34d;">
+                <div class="stat-header"><span>Outstanding Balance</span><span class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d4af37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
+                    </svg>
+                </span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #92400e;"><span class="peso-bold" style="color: #92400e;">₱</span>@totalDue.ToString("N2")</h2>
+                    <p class="stat-sub" style="color: #78350f;">Due: @(nextDueDate?.ToString("MMM dd") ?? "No pending bills")</p>
+                </div>
+            </div>
+
+            <div class="stat-card" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fde68a;">
+                <div class="stat-header"><span>My Requests</span><span class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                    </svg>
+                </span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #92400e;">@activeRequests</h2>
+                    <p class="stat-sub" style="color: #78350f;">Active repairs</p>
+                </div>
+            </div>
+
+            <div class="stat-card" style="background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); border-color: #c7d2fe;">
+                <div class="stat-header"><span>My Bookings</span><span class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                    </svg>
+                </span></div>
+                <div class="stat-body">
+                    <h2 class="stat-value" style="color: #4338ca;">@activeReservations</h2>
+                    <p class="stat-sub" style="color: #3730a3;">Upcoming bookings</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content-split">
+            <div class="content-left">
+                <div class="content-section">
+                    <div class="section-header">
+                        <h3>Community News</h3>
+                        <input type="text" placeholder="Search news..." class="search-input-small" @bind="annSearchTerm" @bind:event="oninput" />
+                    </div>
+                    <div class="scroll-container">
+                        <div class="announcement-list">
+                            @if (!FilteredAnnouncements.Any())
+                            {
+                                <p class="empty-msg">No matching announcements.</p>
+                            }
+                            else
+                            {
+                                @foreach (var item in FilteredAnnouncements)
+                                {
+                                    <div class="announcement-item @(item.IsUrgent ? "urgent" : "")">
+                                        <div class="ann-info">
+                                            <span class="ann-title">
+                                                @if (item.IsUrgent)
+                                                {
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 1-1.71 3h16.94a2 2 0 0 1-1.71-3L13.71 3.86a2 2 0 0 1 3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                                }
+                                                @item.Title
+                                            </span>
+                                            <span class="ann-date">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                                @item.Date.ToString("MMM dd")
+                                            </span>
+                                        </div>
+                                        <p class="ann-preview">@item.Message</p>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="content-section" style="margin-top: 25px;">
+                    <div class="section-header">
+                        <h3>My Recent Activity</h3>
+                        <input type="text" placeholder="Search activities..." class="search-input-small" @bind="activitySearch" @bind:event="oninput" />
+                    </div>
+                    <div class="scroll-container">
+                        <div class="activity-list">
+                            @if (!FilteredActivities.Any())
+                            {
+                                <p class="empty-msg">No activities found.</p>
+                            }
+                        @foreach (var act in FilteredActivities)
+                        {
+                            <div class="activity-item">
+                                <span class="act-icon">
+                                    @switch (act.Icon)
+                                    {
+                                        case "billing":
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
+                                            </svg>
+                                            break;
+                                        case "maintenance":
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                                            </svg>
+                                            break;
+                                        case "reservation":
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                            </svg>
+                                            break;
+                                        default:
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                                            </svg>
+                                            break;
+                                    }
+                                </span>
+                                <div class="act-details">
+                                    <span class="act-text">@act.Text</span>
+                                    <span class="act-time">@act.Time.ToString("MMM dd, hh:mm tt")</span>
+                                </div>
+                            </div>
+                        }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-right">
+                <div class="content-section">
+                    <div class="section-header">
+                        <h3>Quick Actions</h3>
+                    </div>
+                    <div class="action-grid">
+                        <button class="action-btn" @onclick='() => Nav.NavigateTo("/tenant-billing")'>
+                            <span class="btn-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
+                                </svg>
+                            </span> Pay Bills
+                        </button>
+                        <button class="action-btn" @onclick='() => Nav.NavigateTo("/tenant-maintenance")'>
+                            <span class="btn-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                                </svg>
+                            </span> Request Repair
+                        </button>
+                        <button class="action-btn" @onclick='() => Nav.NavigateTo("/tenant-reservations")'>
+                            <span class="btn-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                </svg>
+                            </span> Book Facility
+                        </button>
+                        <button class="action-btn" @onclick='() => Nav.NavigateTo("/tenant-profile")'>
+                            <span class="btn-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                                </svg>
+                            </span> My Profile
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Advertisement / Special Offers Area -->
+                <div class="content-section" style="margin-top: 25px;">
+                    <div class="section-header">
+                        <h3>Special Offers</h3>
+                        <span class="badge-count">@dashboardPromos.Count</span>
+                    </div>
+                    <div class="promo-scroll-area">
+                        @if (dashboardPromos.Any())
+                        {
+                            @foreach (var promo in dashboardPromos)
+                            {
+                                <div class="light-promo-ad">
+                                     <div class="ad-top">
+                                         <span class="ad-tag">LIMITED</span>
+                                         <span class="ad-icon">
+                                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d4af37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+                                             </svg>
+                                         </span>
+                                     </div>
+                                    <h4 class="ad-title">@promo.Title</h4>
+                                    <p class="ad-desc">@promo.Description</p>
+                                    <div class="ad-code-wrapper">
+                                        <span class="code-label">PROMO CODE</span>
+                                        <span class="code-val">@promo.PromoCode</span>
+                                    </div>
+                                    <div class="ad-footer">
+                                        Ends @promo.ExpiryDate.ToString("MMM dd, yyyy")
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="promo-empty-state">
+                                <p>No active deals right now.</p>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = true;
+    private string _conn = DbConfig.ConnectionString;
+    private CultureInfo nph = new CultureInfo("en-PH");
+    private string unitNumber = "", activitySearch = "", annSearchTerm = "", profilePicBase64 = "";
+    private decimal totalDue = 0;
+    private int activeRequests = 0, activeReservations = 0;
+    private DateTime? nextDueDate;
+    private List<AnnModel> announcements = new();
+    private List<ActivityModel> activities = new();
+    private List<PromoModel> dashboardPromos = new();
+
+    private IEnumerable<AnnModel> FilteredAnnouncements => announcements
+        .Where(a => string.IsNullOrEmpty(annSearchTerm) || a.Title.Contains(annSearchTerm, StringComparison.OrdinalIgnoreCase));
+
+    private IEnumerable<ActivityModel> FilteredActivities => activities.Where(a => 
+        string.IsNullOrEmpty(activitySearch) || a.Text.Contains(activitySearch, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Login.LoggedInTenantId == null) { Nav.NavigateTo("/login"); return; }
+        hasAccess = await CheckModuleAccess("Dashboard");
+        if (hasAccess)
+        {
+            await LoadTenantDashboardData();
+            await LoadProfilePic();
+        }
+        isChecking = false;
+    }
+
+    private async Task<bool> CheckModuleAccess(string mod)
+    {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            cmd.Parameters.AddWithValue("@mod", mod);
+            var res = await cmd.ExecuteScalarAsync();
+            return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File; if (file == null) return;
+        var resized = await file.RequestImageFileAsync("image/png", 300, 300);
+        var buffer = new byte[resized.Size];
+        using var stream = resized.OpenReadStream();
+        await stream.ReadAsync(buffer);
+        profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
+
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@pic", profilePicBase64);
+        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task LoadProfilePic()
+    {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+        } catch { }
+    }
+
+    private async Task LoadTenantDashboardData()
+    {
+        try
+        {
+            activities.Clear(); announcements.Clear(); dashboardPromos.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+
+            using SqlCommand cmdUnit = new("SELECT UnitNumber FROM Tenants WHERE Id = @tid", conn);
+            cmdUnit.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            unitNumber = (await cmdUnit.ExecuteScalarAsync())?.ToString() ?? "N/A";
+
+            string statsSql = @"
+                SELECT 
+                    ISNULL((SELECT SUM(Amount) FROM Billings WHERE TenantId = @tid AND Status != 'PAID'), 0),
+                    (SELECT MIN(DueDate) FROM Billings WHERE TenantId = @tid AND Status != 'PAID'),
+                    (SELECT COUNT(*) FROM MaintenanceRequests WHERE TenantId = @tid AND Status != 'COMPLETED'),
+                    (SELECT COUNT(*) FROM Reservations WHERE TenantId = @tid AND Status = 'PENDING');";
+            using SqlCommand cmdStats = new(statsSql, conn);
+            cmdStats.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var reader = await cmdStats.ExecuteReaderAsync();
+            if (await reader.ReadAsync()) {
+                totalDue = reader.GetDecimal(0);
+                nextDueDate = reader.IsDBNull(1) ? null : reader.GetDateTime(1);
+                activeRequests = reader.GetInt32(2);
+                activeReservations = reader.GetInt32(3);
+            }
+            await reader.CloseAsync();
+
+            string annSql = "SELECT Title, Message, IsUrgent, CreatedAt FROM Announcements WHERE OrganizationId = @oid ORDER BY CreatedAt DESC";
+            using SqlCommand cmdAnn = new(annSql, conn);
+            cmdAnn.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            using var readerAnn = await cmdAnn.ExecuteReaderAsync();
+            while (await readerAnn.ReadAsync()) {
+                announcements.Add(new AnnModel { Title = readerAnn.GetString(0), Message = readerAnn.GetString(1), IsUrgent = readerAnn.GetBoolean(2), Date = readerAnn.GetDateTime(3)});
+            }
+            await readerAnn.CloseAsync();
+
+            string actSql = @"
+                SELECT 'Bill Generated: ' + Type, CreatedAt, 'billing' FROM Billings WHERE TenantId = @tid
+                UNION
+                SELECT 'Maintenance: ' + Title, CreatedAt, 'maintenance' FROM MaintenanceRequests WHERE TenantId = @tid
+                UNION
+                SELECT 'Booking: ' + FacilityName, CreatedAt, 'reservation' FROM Reservations WHERE TenantId = @tid
+                ORDER BY CreatedAt DESC";
+            using SqlCommand cmdAct = new(actSql, conn);
+            cmdAct.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var readerAct = await cmdAct.ExecuteReaderAsync();
+            while (await readerAct.ReadAsync()){
+                activities.Add(new ActivityModel { Text = readerAct.GetString(0), Time = readerAct.GetDateTime(1), Icon = readerAct.GetString(2) });
+            }
+            await readerAct.CloseAsync();
+
+            string pSql = "SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = @oid AND ExpiryDate >= CAST(GETDATE() AS DATE) ORDER BY CreatedAt DESC";
+            using SqlCommand cmdPromo = new(pSql, conn);
+            cmdPromo.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            using var rP = await cmdPromo.ExecuteReaderAsync();
+            while (await rP.ReadAsync()) {
+                dashboardPromos.Add(new PromoModel { Title = rP.GetString(0), Description = rP.GetString(1), PromoCode = rP.GetString(2), ExpiryDate = rP.GetDateTime(3) });
+            }
+        }
+        catch (Exception ex) { Console.WriteLine(ex.Message); }
+    }
+
+    public class AnnModel { public string Title { get; set; } = ""; public string Message { get; set; } = ""; public bool IsUrgent { get; set; } public DateTime Date { get; set; } }
+    public class ActivityModel { public string Icon { get; set; } = ""; public string Text { get; set; } = ""; public DateTime Time { get; set; } }
+    public class PromoModel { public string Title { get; set; } = ""; public string Description { get; set; } = ""; public string PromoCode { get; set; } = ""; public DateTime ExpiryDate { get; set; } }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .peso-bold { font-family: "Arial", "Segoe UI", sans-serif !important; font-weight: 800; margin-right: 2px; }
+
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header-left h1 { font-size: 28px; font-weight: 800; color: #111827; margin: 0; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+
+    .header-right-group { display: flex; align-items: center; gap: 20px; }
+    .date-display { display: flex; align-items: center; gap: 12px; background: white; padding: 10px 15px; border-radius: 12px; border: 1px solid #e5e7eb; }
+    .day { font-size: 32px; font-weight: 800; color: #14b8a6; }
+    .month-year { display: flex; flex-direction: column; font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; }
+
+    .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 8px 15px; border-radius: 12px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; }
+    .user-profile-btn:hover { background: #f1f5f9; }
+    .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; border: 2px solid #d4af37; }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-name { font-weight: 700; font-size: 14px; color: #111827; display: block; }
+    .profile-role { font-size: 10px; color: #d4af37; text-transform: uppercase; font-weight: 800; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
+    .stat-card { background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; }
+    .stat-card.gold-accent { border-top: 4px solid #d4af37; }
+    .stat-header { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; }
+    .stat-value { font-size: 26px; font-weight: 800; color: #111827; margin: 0; }
+    .stat-sub { font-size: 12px; color: #9ca3af; margin-top: 5px; }
+
+    .main-content-split { display: grid; grid-template-columns: 2fr 1fr; gap: 25px; }
+    .content-section { background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; }
+    .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .section-header h3 { font-size: 16px; font-weight: 800; margin: 0; color: #111827; }
+    .search-input-small { padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12px; width: 150px; }
+    
+    .scroll-container { max-height: 380px; overflow-y: auto; padding-right: 12px; }
+    .scroll-container::-webkit-scrollbar { width: 6px; }
+    .scroll-container::-webkit-scrollbar-track { background: transparent; }
+    .scroll-container::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 10px; }
+
+    .announcement-list, .activity-list { display: flex; flex-direction: column; gap: 12px; }
+    .announcement-item { padding: 15px; border-radius: 12px; background: #f9fafb; border-left: 4px solid #cbd5e1; }
+    .announcement-item.urgent { border-left-color: #dc2626; background: #fff5f5; }
+    .ann-title { font-weight: 700; font-size: 14px; color: #111827; }
+    .ann-preview { font-size: 13px; color: #64748b; margin: 5px 0 0 0; }
+
+    .activity-item { display: flex; gap: 12px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9; }
+    .act-icon { width: 32px; height: 32px; background: #f1f5f9; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    .act-text { display: block; font-size: 13px; font-weight: 600; color: #334155; }
+    .act-time { font-size: 11px; color: #94a3b8; }
+
+    .action-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .action-btn { display: flex; align-items: center; gap: 15px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; transition: 0.2s; font-size: 13px; font-weight: 700; color: #334155; text-align: left; }
+    .action-btn:hover { background: #0f172a; color: white; border-color: #0f172a; }
+
+    /* LIGHTER SPECIAL OFFERS AREA */
+    .promo-scroll-area { max-height: 400px; overflow-y: auto; padding-right: 5px; display: flex; flex-direction: column; gap: 15px; }
+    .promo-scroll-area::-webkit-scrollbar { width: 4px; }
+    .promo-scroll-area::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+
+    .light-promo-ad { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 15px; border-left: 5px solid #d4af37; transition: 0.2s; }
+    .light-promo-ad:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-color: #d4af37; }
+    .ad-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .ad-tag { background: #fef3c7; color: #b45309; font-size: 9px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
+    .ad-icon { font-size: 14px; }
+    .ad-title { font-size: 14px; font-weight: 800; color: #111827; margin: 0 0 5px 0; }
+    .ad-desc { font-size: 11px; color: #64748b; line-height: 1.4; margin-bottom: 12px; }
+    .ad-code-wrapper { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 8px; border-radius: 8px; text-align: center; }
+    .code-label { display: block; font-size: 8px; font-weight: 700; color: #94a3b8; }
+    .code-val { font-family: monospace; font-size: 13px; font-weight: 800; color: #111827; }
+    .ad-footer { font-size: 9px; font-weight: 700; color: #94a3b8; margin-top: 10px; text-align: right; }
+    .promo-empty-state { text-align: center; padding: 20px; color: #cbd5e1; font-size: 12px; border: 1px dashed #e2e8f0; border-radius: 12px; }
+    .badge-count { background: #111827; color: white; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 800; }
+</style>

@@ -1,0 +1,317 @@
+@page "/admin-reservations"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using IT13EstateCorePlatformMauiBlzaor.Data
+
+@if (isChecking)
+{
+    <p style="padding:40px;">Verifying module access...</p>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1100px; width: 100%; height: 80%; margin-top: -100px;" />
+    </div>
+}
+else
+{
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Reservations</h1>
+                <p class="subtitle">Manage facility bookings for: <strong>@orgName</strong></p>
+            </div>
+        </header>
+
+        <div class="main-card">
+            <div class="card-header-flex">
+                <h2 class="card-title">All Reservation Requests</h2>
+                <div class="search-box">
+                    <input type="text" placeholder="Search resident or facility..." 
+                           class="search-input" 
+                           @bind="searchTerm" 
+                           @bind:event="oninput" />
+                </div>
+            </div>
+
+            @if (FilteredReservations.Count() == 0)
+            {
+                <div style="text-align:center; padding:40px; color:gray;">
+                    <p>No reservations found matching your search.</p>
+                </div>
+            }
+            else
+            {
+                <div class="reservation-list">
+                    @foreach (var res in FilteredReservations)
+                    {
+                        <div class="reservation-item">
+                            <div class="item-left">
+                                <div class="icon-square">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                                    </svg>
+                                </div>
+                                <div class="item-details">
+                                    <div class="name-status">
+                                        <span class="facility-name">@res.FacilityName</span>
+                                        <span class="status-badge @res.Status.ToLower()">@res.Status</span>
+                                    </div>
+                                    <div class="meta-info">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> @res.ReservationDate.ToString("MM/dd/yyyy, hh:mm tt")
+                                    </div>
+                                    <div class="resident-info">
+                                        Resident: @res.TenantName • @res.UnitNumber
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="item-actions">
+                                @if (res.Status == "PENDING")
+                                {
+                                    <button class="btn-accept" @onclick='() => TriggerConfirm(res, "CONFIRMED")'>Accept</button>
+                                    <button class="btn-reject" @onclick='() => TriggerConfirm(res, "REJECTED")'>Reject</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-cancel" @onclick='() => TriggerConfirm(res, "PENDING")'>Reset to Pending</button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+    @if (showConfirmModal)
+    {
+        <div class="modal-backdrop" style="z-index: 10000;">
+            <div class="modal-content" style="width: 400px; text-align: center;">
+                <div class="confirm-icon">
+                    @if (pendingStatus == "CONFIRMED")
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                    }
+                    else if (pendingStatus == "REJECTED")
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                    }
+                </div>
+                <h3 style="margin-top: 10px;">@confirmTitle</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                @confirmMessage
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-cancel-modal" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="@(pendingStatus == "CONFIRMED" ? "btn-accept" : pendingStatus == "REJECTED" ? "btn-reject-confirm" : "btn-primary-confirm")" 
+                        style="flex:1;" @onclick="ExecuteConfirmedUpdate">
+                    Confirm Action
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = false;
+    private string searchTerm = "";
+    private string _conn = DbConfig.ConnectionString;
+    private string orgName = "";
+    private int myOrgId => Login.LoggedInOrgId;
+
+    private List<ReservationModel> reservations = new();
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+    private string confirmTitle = "";
+    private string confirmMessage = "";
+    private int pendingReservationId = 0;
+    private string pendingStatus = "";
+
+    private IEnumerable<ReservationModel> FilteredReservations =>
+        reservations.Where(r => r.FacilityName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                                r.TenantName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                                r.UnitNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await CheckAccess("Reservations");
+        if (hasAccess) await LoadData();
+        isChecking = false;
+    }
+
+    private async Task LoadData() {
+        try {
+            reservations.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+
+            using SqlCommand cmdOrg = new("SELECT Name FROM Organizations WHERE OrganizationId = @oid", conn);
+            cmdOrg.Parameters.AddWithValue("@oid", myOrgId);
+            orgName = (await cmdOrg.ExecuteScalarAsync())?.ToString() ?? "Unknown";
+
+            string sql = @"SELECT r.Id, r.FacilityName, r.ReservationDate, r.Status, t.FullName, t.UnitNumber 
+                           FROM Reservations r
+                           JOIN Tenants t ON r.TenantId = t.Id
+                           WHERE r.OrganizationId = @oid
+                           ORDER BY CASE WHEN r.Status = 'PENDING' THEN 1 ELSE 2 END, r.ReservationDate ASC";
+            
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) {
+                reservations.Add(new ReservationModel {
+                    Id = reader.GetInt32(0),
+                    FacilityName = reader.GetString(1),
+                    ReservationDate = reader.GetDateTime(2),
+                    Status = reader.GetString(3),
+                    TenantName = reader.GetString(4),
+                    UnitNumber = reader.GetString(5)
+                });
+            }
+        } catch (Exception ex) { Console.WriteLine("LOAD ERROR: " + ex.Message); }
+    }
+
+    private void TriggerConfirm(ReservationModel res, string nextStatus)
+    {
+        pendingReservationId = res.Id;
+        pendingStatus = nextStatus;
+        showConfirmModal = true;
+
+        if (nextStatus == "CONFIRMED")
+        {
+            confirmTitle = "Approve Booking?";
+            confirmMessage = $"Are you sure you want to approve the reservation for {res.FacilityName} by {res.TenantName}?";
+        }
+        else if (nextStatus == "REJECTED")
+        {
+            confirmTitle = "Reject Booking?";
+            confirmMessage = $"This will decline the reservation for {res.FacilityName}. The resident will be notified.";
+        }
+        else
+        {
+            confirmTitle = "Reset to Pending?";
+            confirmMessage = $"Would you like to move this reservation back to the pending queue for review?";
+        }
+    }
+
+    private async Task ExecuteConfirmedUpdate()
+    {
+        showConfirmModal = false;
+        await UpdateStatus(pendingReservationId, pendingStatus);
+    }
+
+    private async Task UpdateStatus(int id, string newStatus) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlCommand cmd = new("UPDATE Reservations SET Status = @status WHERE Id = @id AND OrganizationId = @oid", conn);
+            cmd.Parameters.AddWithValue("@status", newStatus);
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            await cmd.ExecuteNonQueryAsync();
+            await LoadData();
+        } catch { }
+    }
+
+    private async Task<bool> CheckAccess(string module) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT su.IsEnabled FROM Organizations o JOIN SystemUpdates su ON o.PlanType = su.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn); cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@mod", module);
+            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    public class ReservationModel {
+        public int Id { get; set; }
+        public string FacilityName { get; set; } = "";
+        public DateTime ReservationDate { get; set; }
+        public string Status { get; set; } = "";
+        public string TenantName { get; set; } = "";
+        public string UnitNumber { get; set; } = "";
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header h1 { font-size: 32px; font-weight: 800; margin: 0; color: #111827; }
+    .subtitle { color: #6b7280; font-size: 15px; margin-top: 5px; }
+
+    .main-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; }
+    .card-header-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .card-title { font-size: 14px; font-weight: 700; color: #111827; margin: 0; text-transform: uppercase; }
+
+    .search-input { padding: 8px 16px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; width: 250px; transition: border-color 0.2s; }
+    .search-input:focus { outline: none; border-color: #111827; }
+
+    .reservation-list { display: flex; flex-direction: column; gap: 12px; }
+    .reservation-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border: 1px solid #f3f4f6; border-radius: 10px; transition: 0.2s; }
+    .reservation-item:hover { border-color: #d1d5db; background: #fafafa; }
+
+    .item-left { display: flex; align-items: center; gap: 16px; }
+    .icon-square { width: 44px; height: 44px; background: #f3f4f6; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+
+    .item-details { display: flex; flex-direction: column; gap: 4px; }
+    .name-status { display: flex; align-items: center; gap: 10px; }
+    .facility-name { font-weight: 700; font-size: 15px; color: #111827; }
+
+    .status-badge { font-size: 10px; font-weight: 800; padding: 4px 12px; border-radius: 100px; text-transform: uppercase; }
+    .status-badge.confirmed { background: #111827; color: white; }
+    .status-badge.pending { background: #fef3c7; color: #d97706; }
+    .status-badge.rejected { background: #fee2e2; color: #dc2626; }
+
+    .meta-info { font-size: 13px; color: #6b7280; display: flex; align-items: center; gap: 6px; }
+    .resident-info { font-size: 13px; color: #374151; font-weight: 600; }
+
+    .item-actions { display: flex; gap: 8px; }
+    .btn-accept { background: #10b981; color: white; border: none; padding: 8px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
+    .btn-accept:hover { background: #059669; transform: translateY(-1px); }
+    
+    .btn-reject { background: #fee2e2; color: #dc2626; border: none; padding: 8px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
+    .btn-reject:hover { background: #fecaca; transform: translateY(-1px); }
+    
+    .btn-reject-confirm { background: #dc2626; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .btn-primary-confirm { background: #111827; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+
+    .btn-cancel { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; padding: 9px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
+    .btn-cancel:hover { background: #e5e7eb; color: #111827; }
+
+    /* Modal Styling */
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .confirm-icon { font-size: 32px; margin-bottom: 10px; }
+    .btn-cancel-modal { background: white; border: 1px solid #e5e7eb; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .btn-cancel-modal:hover { background: #f9fafb; }
+</style>

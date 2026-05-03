@@ -1,0 +1,282 @@
+@page "/tenant-profile"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using IT13EstateCorePlatformMauiBlzaor.Data
+@inject NavigationManager Nav
+
+@if (isChecking)
+{
+    <p style="padding:40px; text-align:center;">Loading profile...</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="status-toast">@statusMessage</div>
+    }
+
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>My Account Settings</h1>
+                <p class="subtitle">Manage your personal information and security.</p>
+            </div>
+
+            <div class="header-right-group">
+                <label for="tenantPicUpload" class="user-profile-btn">
+                    <div class="profile-info" style="text-align: right;">
+                        <span class="profile-name">@Login.LoggedInName</span>
+                        <span class="profile-role">Resident</span>
+                    </div>
+                    <div class="avatar-circle">
+                        @if (!string.IsNullOrEmpty(profilePicBase64))
+                        {
+                            <img src="@profilePicBase64" />
+                        }
+                        else
+                        {
+                            <span>@(string.IsNullOrEmpty(Login.LoggedInName) ? "T" : Login.LoggedInName.Substring(0, 1).ToUpper())</span>
+                        }
+                    </div>
+                    <InputFile id="tenantPicUpload" OnChange="HandleFileSelected" style="display:none;" />
+                </label>
+            </div>
+        </header>
+
+        <div class="profile-grid">
+            <div class="profile-card">
+                <div class="card-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <h3>Personal Information</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Full Name</label>
+                        <input type="text" @bind="profile.FullName" class="form-input" />
+                    </div>
+                    <div class="form-group">
+                        <label>Email Address (Username)</label>
+                        <input type="text" value="@profile.Email" class="form-input readonly" readonly />
+                    </div>
+                    <div class="form-group">
+                        <label>Phone Number</label>
+                        <input type="text" @bind="profile.PhoneNumber" class="form-input" />
+                    </div>
+                    <div class="form-group">
+                        <label>Assigned Unit</label>
+                        <input type="text" value="@profile.UnitNumber" class="form-input readonly" readonly />
+                    </div>
+                </div>
+            </div>
+
+            <div class="profile-card">
+                <div class="card-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    <h3>Security & Password</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Current Password</label>
+                        <input type="password" @bind="profile.Password" class="form-input" />
+                    </div>
+                    <div class="form-group">
+                        <label>New Password (Optional)</label>
+                        <input type="password" @bind="newPassword" class="form-input" />
+                    </div>
+                    <button class="btn-save" @onclick="TriggerUpdateConfirm">Update My Profile</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+@if (showConfirmModal)
+{
+    <div class="modal-backdrop" style="z-index: 10000;">
+        <div class="modal-content" style="width: 400px; text-align: center; border-radius: 16px;">
+            <div class="confirm-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 10"/>
+                </svg>
+            </div>
+            <h3 style="margin-top: 10px;">@confirmTitle</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                @confirmMessage
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-outline" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="btn-save" style="flex:1; padding: 12px;" @onclick="ExecuteConfirmedAction">
+                    Yes, Update
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true;
+    private string _conn = DbConfig.ConnectionString;
+    private string statusMessage = "", profilePicBase64 = "", newPassword = "";
+    private ProfileModel profile = new();
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+    private string confirmTitle = "";
+    private string confirmMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Login.LoggedInTenantId == null) { Nav.NavigateTo("/login"); return; }
+        await LoadProfileData();
+        await LoadProfilePic();
+        isChecking = false;
+    }
+
+    private async Task LoadProfileData()
+    {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT FullName, Email, PhoneNumber, UnitNumber, Password FROM Tenants WHERE Id = @tid";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var r = await cmd.ExecuteReaderAsync();
+            if (await r.ReadAsync()) {
+                profile = new ProfileModel { FullName = r.GetString(0), Email = r.IsDBNull(1) ? "" : r.GetString(1), PhoneNumber = r.IsDBNull(2) ? "" : r.GetString(2), UnitNumber = r.GetString(3), Password = r.IsDBNull(4) ? "" : r.GetString(4) };
+            }
+        } catch { }
+    }
+
+    // --- Confirmation Trigger Logic ---
+    private void TriggerUpdateConfirm() {
+        confirmTitle = "Update Profile?";
+        confirmMessage = "Are you sure you want to save these changes to your account? This will update your personal details and security credentials.";
+        showConfirmModal = true;
+    }
+
+    private async Task ExecuteConfirmedAction() {
+        showConfirmModal = false;
+        await UpdateProfile();
+    }
+
+    private async Task UpdateProfile()
+    {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string passToSave = string.IsNullOrWhiteSpace(newPassword) ? profile.Password : newPassword;
+            string sql = "UPDATE Tenants SET FullName = @n, PhoneNumber = @p, Password = @pass WHERE Id = @tid";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@n", profile.FullName);
+            cmd.Parameters.AddWithValue("@p", profile.PhoneNumber);
+            cmd.Parameters.AddWithValue("@pass", passToSave);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            await cmd.ExecuteNonQueryAsync();
+            Login.LoggedInName = profile.FullName;
+            newPassword = ""; // Clear new password field after update
+            ShowToast("Profile updated successfully!");
+        } catch { ShowToast("Update Error."); }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File; if (file == null) return;
+        var resized = await file.RequestImageFileAsync("image/png", 300, 300);
+        var buffer = new byte[resized.Size];
+        using var stream = resized.OpenReadStream();
+        await stream.ReadAsync(buffer);
+        profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
+
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@pic", profilePicBase64);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            await cmd.ExecuteNonQueryAsync();
+        } catch { }
+    }
+
+    private async Task LoadProfilePic()
+    {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+        } catch { }
+    }
+
+    private void ShowToast(string msg) { statusMessage = msg; StateHasChanged(); Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); }); }
+
+    public class ProfileModel { public string FullName { get; set; } = ""; public string Email { get; set; } = ""; public string PhoneNumber { get; set; } = ""; public string UnitNumber { get; set; } = ""; public string Password { get; set; } = ""; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header-left h1 { font-size: 28px; font-weight: 800; color: #111827; margin: 0; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+
+    .header-right-group { display: flex; align-items: center; gap: 20px; }
+    .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 8px 15px; border-radius: 12px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; }
+    .user-profile-btn:hover { background: #f1f5f9; }
+    .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; overflow: hidden; border: 2px solid #d4af37; }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-name { display: block; font-weight: 700; font-size: 14px; color: #111827; }
+    .profile-role { font-size: 10px; color: #d4af37; text-transform: uppercase; font-weight: 800; }
+
+    .profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+    .profile-card { background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 30px; }
+    .card-header h3 { font-size: 18px; font-weight: 800; color: #111827; margin: 0 0 20px 0; }
+    .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+
+    .form-group { margin-bottom: 20px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 8px; }
+    .form-input { width: 100%; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none; }
+    .form-input.readonly { background: #f9fafb; color: #94a3b8; cursor: not-allowed; }
+
+    .btn-save { background: #111827; color: white; border: none; padding: 14px 28px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; width: 100%; font-size: 14px; }
+    .btn-save:hover { background: #000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+    /* Custom Confirmation Styles */
+    .confirm-icon { font-size: 32px; margin-bottom: 10px; }
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 500px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .btn-outline { background: white; border: 1px solid #e5e7eb; padding: 12px; border-radius: 10px; font-weight: 600; cursor: pointer; font-size: 14px; }
+    .btn-outline:hover { background: #f9fafb; }
+
+    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
+</style>

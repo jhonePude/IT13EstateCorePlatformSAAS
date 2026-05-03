@@ -1,0 +1,333 @@
+@page "/tenant-billing"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using System.Globalization
+@using IT13EstateCorePlatformMauiBlzaor.Data
+@inject NavigationManager Nav
+
+@if (isChecking)
+{
+    <p style="padding:40px; text-align:center; font-family:'Inter',sans-serif;">Verifying access...</p>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1000px; width: 100%; height: auto;" />
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="status-toast">@statusMessage</div>
+    }
+
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Billing & Payments</h1>
+                <p class="subtitle">Statement for: <strong>@Login.LoggedInName</strong></p>
+            </div>
+
+            <div class="header-right-group">
+                <label for="tenantPicUpload" class="user-profile-btn">
+                    <div class="profile-info" style="text-align: right;">
+                        <span class="profile-name">@Login.LoggedInName</span>
+                        <span class="profile-role">Resident</span>
+                    </div>
+                    <div class="avatar-circle">
+                        @if (!string.IsNullOrEmpty(profilePicBase64))
+                        {
+                            <img src="@profilePicBase64" />
+                        }
+                        else
+                        {
+                            <span>@(string.IsNullOrEmpty(Login.LoggedInName) ? "T" : Login.LoggedInName.Substring(0, 1).ToUpper())</span>
+                        }
+                    </div>
+                    <InputFile id="tenantPicUpload" OnChange="HandleFileSelected" style="display:none;" />
+                </label>
+            </div>
+        </header>
+
+        <div class="stats-row">
+            <div class="stat-item" style="background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); border-color: #fecdd3;">
+                <span class="stat-label" style="color: #9f1239;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg> Total Outstanding</span>
+                <span class="stat-value overdue" style="color: #be123c;"><span class="peso-bold" style="color: #be123c;">₱</span>@totalOutstanding.ToString("N2")</span>
+            </div>
+            <div class="stat-item" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-color: #6ee7b7;">
+                <span class="stat-label" style="color: #065f46;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Paid This Month</span>
+                <span class="stat-value" style="color: #047857;"><span class="peso-bold" style="color: #047857;">₱</span>@paidThisMonth.ToString("N2")</span>
+            </div>
+            <div class="stat-item" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fcd34d;">
+                <span class="stat-label" style="color: #92400e;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Next Due Date</span>
+                <span class="stat-value" style="color: #78350f;">@(nextDueDate?.ToString("MMM dd, yyyy") ?? "No pending dues")</span>
+            </div>
+        </div>
+
+        <div class="table-card">
+            <div class="table-header">
+                <span>My Invoices</span>
+                <input type="text" placeholder="Search invoices..." class="search-input" @bind="searchTerm" @bind:event="oninput" />
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Invoice ID</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Due Date</th>
+                        <th>Status</th>
+                        <th style="text-align: right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var bill in FilteredBillings)
+                    {
+                        <tr>
+                            <td style="font-family: monospace; font-weight: 600;">@bill.BillingNumber</td>
+                            <td>@bill.Type</td>
+                            <td style="font-weight: 700;"><span class="peso-bold">₱</span>@bill.Amount.ToString("N2")</td>
+                            <td>@bill.DueDate.ToString("MMM dd, yyyy")</td>
+                            <td>
+                                <span class="status-pill @bill.Status.ToLower()">@bill.Status</span>
+                            </td>
+                            <td style="text-align: right;">
+                                @if (bill.Status != "PAID")
+                                {
+                                    <button class="btn-pay" @onclick="() => TriggerPaymentConfirm(bill)">Pay Now</button>
+                                }
+                                else
+                                {
+                                    <span style="color: #10b981; font-weight: 700; font-size: 12px;">✅ PAID</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (!FilteredBillings.Any())
+                    {
+                        <tr><td colspan="6" style="text-align:center; padding:40px; color:gray;">No billing records found.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+@if (showConfirmModal)
+{
+    <div class="modal-backdrop" style="z-index: 10000;">
+        <div class="modal-content" style="width: 400px; text-align: center;">
+            <div class="confirm-icon" style="font-size: 32px; margin-bottom: 10px;">💳</div>
+            <h3 style="margin-top: 10px; font-weight: 800;">Confirm Payment</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                Are you sure you want to process the payment for <b>@pendingBillNumber</b>?<br/> This will mark your invoice as Paid.
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-outline-custom" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="btn-pay" style="flex:1;" @onclick="ExecutePayment">Confirm</button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = true;
+    private string _conn = DbConfig.ConnectionString;
+    private string searchTerm = "", profilePicBase64 = "", statusMessage = "";
+    private decimal totalOutstanding = 0, paidThisMonth = 0;
+    private DateTime? nextDueDate;
+    private List<BillingModel> billings = new();
+    private CultureInfo nph = new CultureInfo("en-PH");
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+    private int pendingBillId = 0;
+    private string pendingBillNumber = "";
+
+    private IEnumerable<BillingModel> FilteredBillings => billings.Where(b => 
+        b.BillingNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || 
+        b.Type.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() {
+        if (Login.LoggedInTenantId == null) { Nav.NavigateTo("/login"); return; }
+        hasAccess = await CheckModuleAccess("Billing");
+        if (hasAccess) {
+            await LoadBillingData();
+            await LoadProfilePic();
+        }
+        isChecking = false;
+    }
+
+    private async Task<bool> CheckModuleAccess(string mod) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            cmd.Parameters.AddWithValue("@mod", mod);
+            var res = await cmd.ExecuteScalarAsync();
+            return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    private void TriggerPaymentConfirm(BillingModel bill) {
+        pendingBillId = bill.Id;
+        pendingBillNumber = bill.BillingNumber;
+        showConfirmModal = true;
+    }
+
+    private async Task ExecutePayment() {
+        showConfirmModal = false;
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "UPDATE Billings SET Status = 'PAID' WHERE Id = @id";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@id", pendingBillId);
+            await cmd.ExecuteNonQueryAsync();
+            
+            statusMessage = "Payment Successful!";
+            await LoadBillingData();
+            StateHasChanged();
+            _ = Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
+        } catch { }
+    }
+
+    private async Task LoadBillingData() {
+        try {
+            billings.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            
+            string statSql = @"SELECT 
+                ISNULL(SUM(CASE WHEN Status != 'PAID' THEN Amount ELSE 0 END), 0), 
+                ISNULL(SUM(CASE WHEN Status = 'PAID' AND MONTH(CreatedAt) = MONTH(GETDATE()) THEN Amount ELSE 0 END), 0), 
+                MIN(CASE WHEN Status != 'PAID' THEN DueDate ELSE NULL END) 
+                FROM Billings WHERE TenantId = @tid";
+            using SqlCommand statCmd = new(statSql, conn);
+            statCmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var sReader = await statCmd.ExecuteReaderAsync();
+            if (await sReader.ReadAsync()) {
+                totalOutstanding = sReader.GetDecimal(0);
+                paidThisMonth = sReader.GetDecimal(1);
+                nextDueDate = sReader.IsDBNull(2) ? null : sReader.GetDateTime(2);
+            }
+            await sReader.CloseAsync();
+
+            string sql = "SELECT Id, BillingNumber, Type, Amount, DueDate, Status FROM Billings WHERE TenantId = @tid ORDER BY CreatedAt DESC";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) billings.Add(new BillingModel { 
+                Id = reader.GetInt32(0), 
+                BillingNumber = reader.GetString(1), 
+                Type = reader.GetString(2), 
+                Amount = reader.GetDecimal(3), 
+                DueDate = reader.GetDateTime(4), 
+                Status = reader.GetString(5) 
+            });
+        } catch { }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e) {
+        var file = e.File; if (file == null) return;
+        var resized = await file.RequestImageFileAsync("image/png", 300, 300);
+        var buffer = new byte[resized.Size];
+        using var stream = resized.OpenReadStream(); await stream.ReadAsync(buffer);
+        profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task LoadProfilePic() {
+        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
+        using SqlCommand cmd = new(sql, conn);
+        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+        profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+    }
+
+    public class BillingModel { public int Id { get; set; } public string BillingNumber { get; set; } = ""; public string Type { get; set; } = ""; public decimal Amount { get; set; } public DateTime DueDate { get; set; } public string Status { get; set; } = ""; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+    .header-left h1 { font-size: 32px; font-weight: 800; color: #111827; margin: 0; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+    .peso-bold { font-family: "Arial", "Segoe UI", sans-serif !important; font-weight: 800; margin-right: 2px; }
+    
+    .header-right-group { display: flex; align-items: center; gap: 20px; }
+    .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 8px 15px; border-radius: 12px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; }
+    .user-profile-btn:hover { background: #f1f5f9; }
+    .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; border: 2px solid #d4af37; }
+    .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+    .profile-name { font-weight: 700; font-size: 14px; color: #111827; display: block; }
+    .profile-role { font-size: 10px; color: #d4af37; text-transform: uppercase; font-weight: 800; }
+
+    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
+
+    .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
+    .stat-item { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    .stat-label { font-size: 13px; color: #6b7280; font-weight: 600; display: block; margin-bottom: 8px; }
+    .stat-value { font-size: 24px; font-weight: 800; color: #111827; }
+    .stat-value.overdue { color: #dc2626; }
+
+    .table-card { background: white; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; }
+    .table-header { display: flex; justify-content: space-between; padding: 20px; border-bottom: 1px solid #f3f4f6; align-items: center; }
+    .search-input { padding: 8px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; width: 250px; }
+
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th { padding: 16px 20px; font-size: 12px; color: #64748b; text-align: left; border-bottom: 1px solid #f3f4f6; text-transform: uppercase; font-weight: 700; }
+    .data-table td { padding: 16px 20px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #334155; }
+
+    .status-pill { padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .status-pill.paid { background: #d1fae5; color: #059669; }
+    .status-pill.pending { background: #fef3c7; color: #d97706; }
+
+    .btn-pay { background: #111827; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-pay:hover { background: #14b8a6; }
+
+    /* Custom Confirm Styles */
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .btn-outline-custom { background: white; border: 1px solid #e5e7eb; padding: 10px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .btn-outline-custom:hover { background: #f8f9fa; }
+</style>

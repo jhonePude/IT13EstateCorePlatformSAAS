@@ -1,0 +1,422 @@
+@page "/admin-billing"
+@layout UserLayout
+@using System.Data
+@using Microsoft.Data.SqlClient
+@using System.Globalization
+@using IT13EstateCorePlatformMauiBlzaor.Data
+
+@if (isChecking)
+{
+    <p style="padding:40px;">Verifying module access...</p>
+}
+else if (!hasAccess)
+{
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0vh; text-align: center;">
+        <img src="Maintenance.png" alt="Under Maintenance" style="max-width: 1100px; width: 100%; height: 80%; margin-top: -100px;" />
+    </div>
+}
+else
+{
+    <div class="page-container">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>Billing & Payments</h1>
+                <p class="subtitle">Manage billing records for: <strong>@orgName</strong></p>
+            </div>
+            <button class="btn-primary" @onclick="OpenCreateModal">+ Create Bill</button>
+        </header>
+
+        <div class="stats-row">
+            <div class="stat-item" style="background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); border-color: #fecdd3;">
+                <span class="stat-label" style="color: #9f1239;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg> Total Outstanding</span>
+                <span class="stat-value overdue" style="color: #be123c;">@totalOutstanding.ToString("C2", nph)</span>
+            </div>
+            <div class="stat-item" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-color: #6ee7b7;">
+                <span class="stat-label" style="color: #065f46;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Total Paid Received</span>
+                <span class="stat-value" style="color: #047857;">@paidThisMonth.ToString("C2", nph)</span>
+            </div>
+            <div class="stat-item" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fcd34d;">
+                <span class="stat-label" style="color: #92400e;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Next Due Date</span>
+                <span class="stat-value" style="color: #78350f;">@(nextDueDate?.ToString("MMM dd, yyyy") ?? "N/A")</span>
+            </div>
+        </div>
+
+        <div class="table-card">
+            <div class="table-header">
+                <span>Recent Billing Records</span>
+                <input type="text" placeholder="Search ID, Tenant or Unit..." class="search-input" @bind="searchTerm" @bind:event="oninput" />
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Billing ID</th>
+                        <th>Tenant Name</th>
+                        <th>Unit</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Due Date</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (FilteredBillings == null || !FilteredBillings.Any())
+                    {
+                        <tr><td colspan="8" style="text-align:center; padding:30px; color:#94a3b8;">No billing records found.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var bill in FilteredBillings)
+                        {
+                            <tr>
+                                <td style="font-family: monospace; font-weight: 600;">@bill.BillingNumber</td>
+                                <td><strong>@bill.TenantName</strong></td>
+                                <td><span class="unit-badge">@bill.UnitNumber</span></td>
+                                <td>@bill.Type</td>
+                                <td style="font-weight: 700;">@bill.Amount.ToString("N2")</td>
+                                <td>@bill.DueDate.ToString("MMM dd, yyyy")</td>
+                                <td>
+                                    <span class="status-pill @bill.Status.ToLower()">@bill.Status</span>
+                                </td>
+                                <td>
+                                    <div style="display:flex; gap:5px;">
+                                        <button class="action-btn" @onclick="() => OpenEditModal(bill)">Edit</button>
+                                        <button class="action-btn delete" @onclick="() => TriggerDeleteConfirm(bill)">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@if (showModal)
+{
+    <div class="modal-backdrop">
+        <div class="modal-content">
+            <h3>@(isEditing ? "Edit Billing Entry" : "New Billing Entry")</h3>
+            <hr />
+            
+            <label>Resident & Unit</label>
+            <select @bind="newBilling.TenantId" class="form-input">
+                <option value="0">-- Select Resident --</option>
+                @foreach (var t in availableTenants)
+                {
+                    <option value="@t.Id">@t.FullName (Unit: @t.UnitNumber)</option>
+                }
+            </select>
+
+            <label>Billing Type</label>
+            <input type="text" @bind="newBilling.Type" class="form-input" placeholder="e.g. Monthly Rent, Water, Electricity" />
+            
+            <label>Amount (PHP)</label>
+            <input type="number" @bind="newBilling.Amount" class="form-input" />
+            
+            <label>Due Date</label>
+            <input type="date" @bind="newBilling.DueDate" class="form-input" />
+
+            @if (isEditing)
+            {
+                <label>Status</label>
+                <select @bind="newBilling.Status" class="form-input">
+                    <option value="PENDING">PENDING</option>
+                    <option value="PAID">PAID</option>
+                    <option value="OVERDUE">OVERDUE</option>
+                </select>
+            }
+            
+            <div style="margin-top:20px; display:flex; gap:10px; justify-content: flex-end;">
+                <button class="btn-primary" @onclick="TriggerSaveConfirm" style="flex:1;">@(isEditing ? "Update Bill" : "Save Bill")</button>
+                <button class="btn-details" @onclick="CloseModal" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* CUSTOM CONFIRMATION MODAL *@
+    @if (showConfirmModal)
+    {
+        <div class="modal-backdrop" style="z-index: 10000;">
+            <div class="modal-content" style="width: 400px; text-align: center;">
+                <div class="confirm-icon">
+                    @if (confirmType == "delete")
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                            <polyline points="17 21 17 13 7 13 7 21"/>
+                            <polyline points="7 3 7 8 15 8"/>
+                        </svg>
+                    }
+                </div>
+                <h3 style="margin-top: 10px;">@confirmTitle</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                @confirmMessage
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="action-btn" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="@(confirmType == "delete" ? "btn-danger-action" : "btn-primary")" 
+                        style="flex:1;" @onclick="ExecuteConfirmedAction">
+                    @(confirmType == "delete" ? "Yes, Delete" : "Yes, Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@code {
+    private bool isChecking = true, hasAccess = false, showModal = false, isEditing = false;
+    private string searchTerm = "", orgName = "", _conn = DbConfig.ConnectionString;
+    private int myOrgId => Login.LoggedInOrgId; 
+    private CultureInfo nph = new CultureInfo("en-PH");
+    
+    private List<BillingModel> billings = new();
+    private List<TenantSummary> availableTenants = new();
+    private BillingModel newBilling = new();
+    
+    private decimal totalOutstanding = 0, paidThisMonth = 0;
+    private DateTime? nextDueDate;
+
+    // Confirmation State
+    private bool showConfirmModal = false;
+    private string confirmTitle = "";
+    private string confirmMessage = "";
+    private string confirmType = ""; 
+    private int? pendingDeleteId = null;
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await CheckAccess("Billing");
+        if (hasAccess) {
+            await LoadBillingData();
+            await LoadTenants();
+        }
+        isChecking = false;
+    }
+
+    private async Task LoadTenants() {
+        try {
+            availableTenants.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT Id, FullName, UnitNumber FROM Tenants WHERE OrganizationId = @oid AND Status = 'Active' ORDER BY FullName";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) {
+                availableTenants.Add(new TenantSummary { Id = reader.GetInt32(0), FullName = reader.GetString(1), UnitNumber = reader.GetString(2) });
+            }
+        } catch { }
+    }
+
+    private async Task LoadBillingData() {
+        try {
+            billings.Clear();
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+
+            string updateStatusSql = "UPDATE Billings SET Status = 'OVERDUE' WHERE Status = 'PENDING' AND DueDate < CAST(GETDATE() AS DATE) AND OrganizationId = @oid";
+            using SqlCommand updateCmd = new(updateStatusSql, conn);
+            updateCmd.Parameters.AddWithValue("@oid", myOrgId);
+            await updateCmd.ExecuteNonQueryAsync();
+
+            using SqlCommand cmdOrg = new("SELECT Name FROM Organizations WHERE OrganizationId = @oid", conn);
+            cmdOrg.Parameters.AddWithValue("@oid", myOrgId);
+            orgName = (await cmdOrg.ExecuteScalarAsync())?.ToString() ?? "Organization";
+
+            string statsSql = @"SELECT 
+                                ISNULL(SUM(CASE WHEN Status != 'PAID' THEN Amount ELSE 0 END), 0), 
+                                ISNULL(SUM(CASE WHEN Status = 'PAID' THEN Amount ELSE 0 END), 0), 
+                                MIN(CASE WHEN Status != 'PAID' THEN DueDate ELSE NULL END) 
+                                FROM Billings WHERE OrganizationId = @oid";
+            using SqlCommand statCmd = new(statsSql, conn);
+            statCmd.Parameters.AddWithValue("@oid", myOrgId);
+            using var statReader = await statCmd.ExecuteReaderAsync();
+            if (await statReader.ReadAsync()) {
+                totalOutstanding = statReader.GetDecimal(0);
+                paidThisMonth = statReader.GetDecimal(1);
+                nextDueDate = statReader.IsDBNull(2) ? null : statReader.GetDateTime(2);
+            }
+            await statReader.CloseAsync();
+
+            string sql = @"SELECT b.Id, b.BillingNumber, b.Type, b.Amount, b.DueDate, b.Status, b.TenantId, t.FullName, t.UnitNumber 
+                           FROM Billings b
+                           LEFT JOIN Tenants t ON b.TenantId = t.Id
+                           WHERE b.OrganizationId = @oid ORDER BY b.CreatedAt DESC";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId);
+            using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) {
+                billings.Add(new BillingModel { 
+                    Id = reader.GetInt32(0), BillingNumber = reader.GetString(1), Type = reader.GetString(2), Amount = reader.GetDecimal(3), 
+                    DueDate = reader.GetDateTime(4), Status = reader.GetString(5),
+                    TenantId = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                    TenantName = reader.IsDBNull(7) ? "Unassigned" : reader.GetString(7),
+                    UnitNumber = reader.IsDBNull(8) ? "N/A" : reader.GetString(8) 
+                });
+            }
+        } catch (Exception ex) { Console.WriteLine(ex.Message); }
+    }
+
+    private IEnumerable<BillingModel> FilteredBillings => billings.Where(b => 
+        b.BillingNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || 
+        b.TenantName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+        b.UnitNumber.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    private void OpenCreateModal() { isEditing = false; newBilling = new BillingModel { DueDate = DateTime.Now.AddDays(7), Status = "PENDING", TenantId = 0 }; showModal = true; }
+    private void OpenEditModal(BillingModel bill) { isEditing = true; newBilling = new BillingModel { Id = bill.Id, Type = bill.Type, Amount = bill.Amount, DueDate = bill.DueDate, Status = bill.Status, TenantId = bill.TenantId }; showModal = true; }
+    private void CloseModal() { showModal = false; isEditing = false; }
+
+    // --- Confirmation Trigger Logic ---
+
+    private void TriggerSaveConfirm()
+    {
+        if (newBilling.TenantId == 0) return;
+        confirmType = "save";
+        confirmTitle = isEditing ? "Update Billing?" : "Create Bill?";
+        confirmMessage = isEditing 
+            ? "Are you sure you want to update this billing record?" 
+            : "This will generate a new billing invoice for the selected resident. Proceed?";
+        showConfirmModal = true;
+    }
+
+    private void TriggerDeleteConfirm(BillingModel bill)
+    {
+        pendingDeleteId = bill.Id;
+        confirmType = "delete";
+        confirmTitle = "Delete Billing?";
+        confirmMessage = $"Are you sure you want to delete invoice {bill.BillingNumber}? This action cannot be undone.";
+        showConfirmModal = true;
+    }
+
+    private async Task ExecuteConfirmedAction()
+    {
+        showConfirmModal = false;
+        if (confirmType == "save") await SaveBilling();
+        else if (confirmType == "delete" && pendingDeleteId.HasValue) await DeleteBilling(pendingDeleteId.Value);
+    }
+
+    // --- Database Operations ---
+
+    private async Task SaveBilling() {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = isEditing 
+                ? "UPDATE Billings SET Type = @type, Amount = @amt, DueDate = @due, Status = @status, TenantId = @tid WHERE Id = @id AND OrganizationId = @oid" 
+                : "INSERT INTO Billings (OrganizationId, Type, Amount, DueDate, Status, TenantId) VALUES (@oid, @type, @amt, @due, 'PENDING', @tid)";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@type", newBilling.Type); cmd.Parameters.AddWithValue("@amt", newBilling.Amount); cmd.Parameters.AddWithValue("@due", newBilling.DueDate); cmd.Parameters.AddWithValue("@tid", newBilling.TenantId);
+            if (isEditing) { cmd.Parameters.AddWithValue("@id", newBilling.Id); cmd.Parameters.AddWithValue("@status", newBilling.Status); }
+            await cmd.ExecuteNonQueryAsync(); showModal = false; await LoadBillingData();
+        } catch {}
+    }
+
+    private async Task DeleteBilling(int id) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlCommand cmd = new("DELETE FROM Billings WHERE Id = @id AND OrganizationId = @oid", conn);
+            cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@oid", myOrgId);
+            await cmd.ExecuteNonQueryAsync(); await LoadBillingData();
+        } catch { }
+    }
+
+    private async Task<bool> CheckAccess(string module) {
+        try {
+            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            string sql = "SELECT su.IsEnabled FROM Organizations o JOIN SystemUpdates su ON o.PlanType = su.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
+            using SqlCommand cmd = new(sql, conn); cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@mod", module);
+            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+        } catch { return false; }
+    }
+
+    public class BillingModel { public int Id { get; set; } public string BillingNumber { get; set; } = ""; public string Type { get; set; } = ""; public decimal Amount { get; set; } public DateTime DueDate { get; set; } = DateTime.Now; public string Status { get; set; } = "PENDING"; public int TenantId { get; set; } public string TenantName { get; set; } = ""; public string UnitNumber { get; set; } = ""; }
+    public class TenantSummary { public int Id { get; set; } public string FullName { get; set; } = ""; public string UnitNumber { get; set; } = ""; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<style>
+    .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
+    .page-header h1 { font-size: 32px; font-weight: 800; margin: 0; color: #111827; }
+    .subtitle { color: #6b7280; font-size: 15px; margin-top: 5px; }
+
+    .btn-primary { background: #111827; color: white; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; line-height: 1.2; }
+    .btn-primary:hover { background: #000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+    .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
+    .stat-item { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    
+    .stat-label { font-size: 13px; color: #6b7280; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #111827; display: block; }
+    .stat-value.overdue { color: #ef4444; }
+
+    .table-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+    .table-header { display: flex; justify-content: space-between; padding: 20px; border-bottom: 1px solid #f3f4f6; }
+    .search-input { padding: 8px 16px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; width: 260px; }
+
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th { padding: 16px 20px; font-size: 12px; color: #6b7280; text-align: left; border-bottom: 1px solid #f3f4f6; text-transform: uppercase; font-weight: 700; }
+    .data-table td { padding: 16px 20px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+
+    .unit-badge { background: #f1f5f9; color: #475569; padding: 4px 12px; border-radius: 6px; font-size: 11px; font-weight: 800; border: 1px solid #e2e8f0; }
+
+    .status-pill { padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .status-pill.paid { background: #d1fae5; color: #059669; }
+    .status-pill.pending { background: #fef3c7; color: #d97706; }
+    .status-pill.overdue { background: #fee2e2; color: #dc2626; }
+
+    .action-btn { background: white; border: 1px solid #e5e7eb; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: all 0.2s; font-size: 12px; font-weight: 600; }
+    .action-btn:hover { background: #f3f4f6; border-color: #111827; transform: translateY(-1px); }
+    .action-btn.delete:hover { background: #fee2e2 !important; color: #dc2626 !important; border-color: #dc2626 !important; }
+
+    /* Custom Confirm Styles */
+    .confirm-icon { font-size: 32px; margin-bottom: 10px; }
+    .btn-danger-action { background: #dc2626; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-danger-action:hover { background: #b91c1c; }
+
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .form-input { width: 100%; padding: 12px; margin-top: 6px; margin-bottom: 18px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+    label { font-size: 13px; font-weight: 700; color: #374151; }
+
+    .btn-details { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+</style>
