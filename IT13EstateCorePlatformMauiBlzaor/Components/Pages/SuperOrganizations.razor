@@ -295,4 +295,69 @@
     .modal-content { background: white; padding: 30px; border-radius: 16px; width: 450px; }
     .form-input { width: 100%; padding: 10px; margin: 8px 0 15px 0; border: 1px solid #ddd; border-radius: 8px; }
     .btn-outline { background: white; border: 1px solid #ddd; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
+    /* Organization Card Footer Actions */
+    .card-footer { 
+        padding: 15px 20px; 
+        background: #f9fafb; 
+        border-top: 1px solid #f3f4f6; 
+        border-radius: 0 0 12px 12px; 
+        display: flex; 
+        gap: 10px; 
+    }
+
+    .btn-edit-small { 
+        flex: 1;
+        background: white; 
+        border: 1px solid #e5e7eb; 
+        padding: 8px; 
+        border-radius: 8px; 
+        font-size: 12px; 
+        font-weight: 700; 
+        color: #111827; 
+        cursor: pointer; 
+        transition: 0.2s; 
+    }
+
+    .btn-edit-small:hover { 
+        background: #f3f4f6; 
+        border-color: #111827;
+    }
+
+    .btn-delete-small { 
+        flex: 1;
+        background: #fee2e2; 
+        border: 1px solid #fecaca; 
+        padding: 8px; 
+        border-radius: 8px; 
+        font-size: 12px; 
+        font-weight: 700; 
+        color: #dc2626; 
+        cursor: pointer; 
+        transition: 0.2s; 
+    }
+
+    .btn-delete-small:hover { 
+        background: #dc2626; 
+        color: white; 
+        border-color: #dc2626;
+    }
+
+    /* Card Details Design */
+    .description { 
+        font-size: 13px; 
+        color: #4b5563; 
+        margin: 5px 0; 
+    }
+
+    .priority-badge {
+        font-size: 10px;
+        font-weight: 800;
+        padding: 4px 10px;
+        border-radius: 6px;
+        text-transform: uppercase;
+    }
+    
+    .priority-badge.free { background: #f1f5f9; color: #64748b; }
+    .priority-badge.basic { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+    .priority-badge.enterprise { background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
 </style>
