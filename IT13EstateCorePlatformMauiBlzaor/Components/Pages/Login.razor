@@ -1,7 +1,9 @@
 @page "/login"
+@using IT13EstateCorePlatformMauiBlzaor.Data
 @using Microsoft.Data.SqlClient
 @inject NavigationManager Navigation
 @using System.Data
+@using System.Globalization
 
 <div class="full-screen-wrapper">
     <div class="bg-overlay"></div>
@@ -47,26 +49,10 @@
     </div>
 </div>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @code {
+    // --- GLOBAL SESSION VARIABLES ---
     public static int LoggedInOrgId { get; set; }
-    public static int? LoggedInTenantId { get; set; } // Track specific resident
+    public static int? LoggedInTenantId { get; set; }
     public static string LoggedInName { get; set; } = "";
     public static string LoggedInRole { get; set; } = "";
     public static string LoggedInOrgName { get; set; } = "";
@@ -76,7 +62,7 @@
     private string? ErrorMessage { get; set; }
     private bool ShowPassword { get; set; } = false;
 
-    private string _connectionString = @"Server=jhone_puca\sqlexpress;Database=EstateCoreDB;Trusted_Connection=True;TrustServerCertificate=True;";
+    private string _connectionString = DbConfig.ConnectionString;
 
     private void TogglePassword() => ShowPassword = !ShowPassword;
 
@@ -91,8 +77,11 @@
             using (SqlConnection conn = new SqlConnection(_connectionString)) {
                 await conn.OpenAsync();
 
-                // 1. CHECK STAFF/ADMIN TABLE FIRST
-                string adminSql = "SELECT Role, OrganizationId, FullName FROM [Login] WHERE Username = @user AND Password = @pass AND IsActive = 1";
+                // 1. Check Admin/Staff table
+                string adminSql = @"SELECT l.Role, l.OrganizationId, l.FullName, o.Name 
+                                    FROM [Login] l 
+                                    LEFT JOIN Organizations o ON l.OrganizationId = o.OrganizationId
+                                    WHERE l.Username = @user AND l.Password = @pass AND l.IsActive = 1";
                 using (SqlCommand cmd = new SqlCommand(adminSql, conn)) {
                     cmd.Parameters.AddWithValue("@user", Username.Trim());
                     cmd.Parameters.AddWithValue("@pass", Password.Trim());
@@ -101,6 +90,7 @@
                             LoggedInRole = reader.GetString(0);
                             LoggedInOrgId = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
                             LoggedInName = reader.GetString(2);
+                            LoggedInOrgName = reader.IsDBNull(3) ? "Super Admin" : reader.GetString(3);
                             LoggedInTenantId = null;
                             RedirectUser();
                             return;
@@ -108,7 +98,7 @@
                     }
                 }
 
-                // 2. CHECK TENANTS TABLE (Username = Email)
+                // 2. Check Tenants table
                 string tenantSql = @"SELECT t.Id, t.OrganizationId, t.FullName, o.Name 
                                      FROM Tenants t 
                                      JOIN Organizations o ON t.OrganizationId = o.OrganizationId
@@ -139,22 +129,7 @@
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <style>
-    /* (Styles remain same as your original login css) */
     :root { --brand-gold: #d4af37; --brand-teal: #14b8a6; }
     .full-screen-wrapper { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; background: url('Gemini_Generated_Image_nrzhjnrzhjnrzhjn.png') no-repeat center center fixed; background-size: cover; z-index: 999; }
     .bg-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.6); z-index: 1; }
