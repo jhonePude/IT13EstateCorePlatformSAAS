@@ -17,6 +17,14 @@
         font-weight: 800 !important;
         letter-spacing: -0.5px;
     }
+
+    /* Connection Pulsating Status */
+    .conn-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; margin-right: 5px; }
+    .conn-tag.online { color: #10b981; }
+    .conn-tag.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; top:0; left:0; right:0; bottom:0; background: inherit; border-radius: 50%; animation: pulse-promo-status 1.5s infinite; }
+    @@keyframes pulse-promo-status { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
 </style>
 
 @if (isChecking)
@@ -40,7 +48,14 @@ else
         <header class="page-header">
             <div class="header-left">
                 <h1>Feedback & Promos</h1>
-                <p class="subtitle">Monitor resident satisfaction and manage property promotions for <strong>@orgName</strong>.</p>
+                <p class="subtitle">
+                    @if (DbConfig.IsOnline) {
+                        <span class="conn-tag online"><span class="pulse-dot"></span> Online</span>
+                    } else {
+                        <span class="conn-tag offline">🌐 Offline</span>
+                    }
+                    • Monitor resident satisfaction and manage property promotions for <strong>@orgName</strong>.
+                </p>
             </div>
         </header>
 
@@ -237,54 +252,50 @@ else
 
 
 
-
 @code {
     private int ActiveTab = 1;
-    private bool isChecking = true, hasAccess = false, showPromoModal = false;
-    private string _conn = DbConfig.ConnectionString;
-    private string orgName = "", statusMessage = "", searchTerm = "";
+    private bool isChecking = true, hasAccess = false, showPromoModal = false, showConfirmModal = false;
+    private string searchTerm = "", orgName = "", statusMessage = "", confirmTitle = "", confirmMessage = "", confirmType = "";
     private int myOrgId => Login.LoggedInOrgId;
+    private string _conn = DbConfig.ConnectionString;
 
-    // Confirmation State
-    private bool showConfirmModal = false;
-    private string confirmTitle = "";
-    private string confirmMessage = "";
-    private string confirmType = ""; // "save" or "delete"
-    private int? pendingPromoId = null;
-
-    // Filter Logic
-    private IEnumerable<FeedbackModel> FilteredFeedback => recentFeedback.Where(f => 
-        string.IsNullOrWhiteSpace(searchTerm) || 
-        f.TenantName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || 
-        f.FacilityName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
-
-    private IEnumerable<PromotionModel> FilteredPromos => promotions.Where(p => 
-        string.IsNullOrWhiteSpace(searchTerm) || 
-        p.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
-
-    private string GetRatingLabel(int val) => val switch {
-        5 => "5-Stars Excellent",
-        4 => "4-Stars Very Good",
-        3 => "3-Stars Average",
-        2 => "2-Stars Poor",
-        1 => "1-Star Terrible",
-        _ => "Rating"
-    };
-
-    private PromotionModel newPromo = new() { ExpiryDate = DateTime.Now.AddMonths(1) };
+    private PromotionModel? pendingPromo;
     private List<FeedbackModel> recentFeedback = new();
     private List<FacilityStat> facilityStats = new();
     private List<PromotionModel> promotions = new();
+    private PromotionModel newPromo = new() { ExpiryDate = DateTime.Now.AddMonths(1) };
+
+    private IEnumerable<FeedbackModel> FilteredFeedback => recentFeedback.Where(f => string.IsNullOrWhiteSpace(searchTerm) || f.TenantName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) || f.FacilityName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+    private IEnumerable<PromotionModel> FilteredPromos => promotions.Where(p => string.IsNullOrWhiteSpace(searchTerm) || p.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
 
     protected override async Task OnInitializedAsync()
     {
         hasAccess = await CheckAccess("Feedback");
-        if (hasAccess)
-        {
-            await LoadOrganizationName();
-            await LoadData();
+        if (hasAccess) { 
+            await LoadOrganizationName(); 
+            await LoadData(); 
+            // [ RECOVERY SYNC LOGIC ]
+            if (DbConfig.IsOnline) { _ = SyncMissingPromos(); }
         }
         isChecking = false;
+    }
+
+    private async Task SyncMissingPromos() {
+        try {
+            using SqlConnection local = new(DbConfig.GetLocalRaw); await local.OpenAsync();
+            using var r = await new SqlCommand($"SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = {myOrgId}", local).ExecuteReaderAsync();
+            using SqlConnection online = new(DbConfig.ConnectionString); await online.OpenAsync();
+            while (await r.ReadAsync()) {
+                string sql = @"IF NOT EXISTS (SELECT 1 FROM Promotions WHERE Title=@t AND PromoCode=@c AND OrganizationId=@oid)
+                               INSERT INTO Promotions (OrganizationId, Title, Description, PromoCode, ExpiryDate, CreatedAt)
+                               VALUES (@oid, @t, @d, @c, @e, GETDATE())";
+                using SqlCommand cmd = new(sql, online);
+                cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@t", r.GetString(0));
+                cmd.Parameters.AddWithValue("@d", r.IsDBNull(1) ? "" : r.GetString(1)); cmd.Parameters.AddWithValue("@c", r.IsDBNull(2) ? "" : r.GetString(2));
+                cmd.Parameters.AddWithValue("@e", r.GetDateTime(3));
+                await cmd.ExecuteNonQueryAsync();
+            }
+        } catch { }
     }
 
     private async Task SwitchTab(int tab) { 
@@ -293,141 +304,71 @@ else
         await LoadData(); 
     }
 
-    private async Task LoadOrganizationName()
-    {
-        using SqlConnection conn = new(_conn);
-        await conn.OpenAsync();
-        using SqlCommand cmd = new("SELECT Name FROM Organizations WHERE OrganizationId = @id", conn);
-        cmd.Parameters.AddWithValue("@id", myOrgId);
-        orgName = (await cmd.ExecuteScalarAsync())?.ToString() ?? "Organization";
+    private async Task LoadOrganizationName() {
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+        orgName = (await new SqlCommand($"SELECT Name FROM Organizations WHERE OrganizationId = {myOrgId}", conn).ExecuteScalarAsync())?.ToString() ?? "Organization";
     }
 
-    private async Task LoadData()
-    {
-        try
-        {
-            using SqlConnection conn = new(_conn);
-            await conn.OpenAsync();
-
-            if (ActiveTab == 1)
-            {
+    private async Task LoadData() {
+        try {
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+            if (ActiveTab == 1) {
                 facilityStats.Clear();
-                string statSql = "SELECT FacilityName, AVG(CAST(Rating AS FLOAT)), COUNT(*) FROM Feedback WHERE OrganizationId = @oid GROUP BY FacilityName";
-                using SqlCommand cmd1 = new(statSql, conn);
-                cmd1.Parameters.AddWithValue("@oid", myOrgId);
-                using var r1 = await cmd1.ExecuteReaderAsync();
+                using var r1 = await new SqlCommand($"SELECT FacilityName, AVG(CAST(Rating AS FLOAT)), COUNT(*) FROM Feedback WHERE OrganizationId = {myOrgId} GROUP BY FacilityName", conn).ExecuteReaderAsync();
                 while (await r1.ReadAsync()) facilityStats.Add(new FacilityStat { FacilityName = r1.GetString(0), AvgRating = r1.GetDouble(1), TotalReviews = r1.GetInt32(2) });
-                await r1.CloseAsync();
-
+                r1.Close();
                 recentFeedback.Clear();
-                string fbSql = @"SELECT f.FacilityName, f.Rating, f.Comments, f.CreatedAt, ISNULL(t.FullName, 'Anonymous Resident') 
-                                 FROM Feedback f 
-                                 LEFT JOIN Tenants t ON f.TenantId = t.Id 
-                                 WHERE f.OrganizationId = @oid 
-                                 ORDER BY f.CreatedAt DESC";
-                using SqlCommand cmd2 = new(fbSql, conn);
-                cmd2.Parameters.AddWithValue("@oid", myOrgId);
-                using var r2 = await cmd2.ExecuteReaderAsync();
-                while (await r2.ReadAsync()) recentFeedback.Add(new FeedbackModel { 
-                    FacilityName = r2.GetString(0), 
-                    Rating = r2.GetInt32(1), 
-                    Comments = r2.GetString(2), 
-                    CreatedAt = r2.GetDateTime(3), 
-                    TenantName = r2.GetString(4) 
-                });
-            }
-            else
-            {
+                using var r2 = await new SqlCommand($@"SELECT f.FacilityName, f.Rating, f.Comments, f.CreatedAt, ISNULL(t.FullName, 'Anonymous') FROM Feedback f LEFT JOIN Tenants t ON f.TenantId = t.Id WHERE f.OrganizationId = {myOrgId} ORDER BY f.CreatedAt DESC", conn).ExecuteReaderAsync();
+                while (await r2.ReadAsync()) recentFeedback.Add(new FeedbackModel { FacilityName = r2.GetString(0), Rating = r2.GetInt32(1), Comments = r2.GetString(2), CreatedAt = r2.GetDateTime(3), TenantName = r2.GetString(4) });
+            } else {
                 promotions.Clear();
-                string pSql = "SELECT Id, Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = @oid ORDER BY CreatedAt DESC";
-                using SqlCommand cmd3 = new(pSql, conn);
-                cmd3.Parameters.AddWithValue("@oid", myOrgId);
-                using var r3 = await cmd3.ExecuteReaderAsync();
+                using var r3 = await new SqlCommand($"SELECT Id, Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = {myOrgId} ORDER BY CreatedAt DESC", conn).ExecuteReaderAsync();
                 while (await r3.ReadAsync()) promotions.Add(new PromotionModel { Id = r3.GetInt32(0), Title = r3.GetString(1), Description = r3.GetString(2), PromoCode = r3.GetString(3), ExpiryDate = r3.GetDateTime(4) });
             }
-        }
-        catch { }
+        } catch { }
     }
 
-    // --- Confirmation Trigger Logic ---
+    private void TriggerSaveConfirm() { if (string.IsNullOrEmpty(newPromo.Title)) return; confirmType = "save"; confirmTitle = "Publish Promo?"; confirmMessage = "Mirror data to online mirror?"; showConfirmModal = true; }
+    private void TriggerDeleteConfirm(PromotionModel promo) { pendingPromo = promo; confirmType = "delete"; confirmTitle = "Remove Promo?"; confirmMessage = $"Delete {promo.Title} from all databases?"; showConfirmModal = true; }
 
-    private void TriggerSaveConfirm()
-    {
-        if (string.IsNullOrEmpty(newPromo.Title)) return;
-        confirmType = "save";
-        confirmTitle = "Publish Promotion?";
-        confirmMessage = $"Are you sure you want to publish '{newPromo.Title}'? Residents will be able to see and use this promo code immediately.";
-        showConfirmModal = true;
-    }
-
-    private void TriggerDeleteConfirm(PromotionModel promo)
-    {
-        pendingPromoId = promo.Id;
-        confirmType = "delete";
-        confirmTitle = "Remove Promotion?";
-        confirmMessage = $"Are you sure you want to delete '{promo.Title}'? This will remove the deal from the resident's mobile app.";
-        showConfirmModal = true;
-    }
-
-    private async Task ExecuteConfirmedAction()
-    {
+    private async Task ExecuteConfirmedAction() {
         showConfirmModal = false;
-        if (confirmType == "save") await SavePromo();
-        else if (confirmType == "delete" && pendingPromoId.HasValue) await DeletePromo(pendingPromoId.Value);
+        string sql = confirmType == "delete" ? "DELETE FROM Promotions WHERE Id = @id" : "INSERT INTO Promotions (OrganizationId, Title, Description, PromoCode, ExpiryDate, CreatedAt) VALUES (@oid, @t, @d, @c, @e, GETDATE())";
+        
+        // --- [ DUAL WRITE LOGIC ] ---
+        await RunSqlDual(sql);
+        showPromoModal = false; await LoadData();
+        ShowToast("Success.");
     }
 
-    // --- Database Operations ---
-
-    private async Task SavePromo()
-    {
-        using SqlConnection conn = new(_conn);
-        await conn.OpenAsync();
-        string sql = "INSERT INTO Promotions (OrganizationId, Title, Description, PromoCode, ExpiryDate, CreatedAt) VALUES (@oid, @t, @d, @c, @e, GETDATE())";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@oid", myOrgId);
-        cmd.Parameters.AddWithValue("@t", newPromo.Title);
-        cmd.Parameters.AddWithValue("@d", newPromo.Description ?? "");
-        cmd.Parameters.AddWithValue("@c", newPromo.PromoCode ?? "");
-        cmd.Parameters.AddWithValue("@e", newPromo.ExpiryDate);
-        await cmd.ExecuteNonQueryAsync();
-        showPromoModal = false;
-        ShowToast("Promotion published.");
-        newPromo = new PromotionModel { ExpiryDate = DateTime.Now.AddMonths(1) };
-        await LoadData();
+    private async Task RunSqlDual(string sql) {
+        await RunSql(DbConfig.GetLocalRaw, sql);
+        if (DbConfig.IsOnline) { await RunSql(DbConfig.ConnectionString, sql); }
     }
 
-    private async Task DeletePromo(int id)
-    {
-        using SqlConnection conn = new(_conn);
-        await conn.OpenAsync();
-        using SqlCommand cmd = new("DELETE FROM Promotions WHERE Id = @id AND OrganizationId = @oid", conn);
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@oid", myOrgId);
-        await cmd.ExecuteNonQueryAsync();
-        ShowToast("Promo deleted.");
-        await LoadData();
-    }
-
-    private void ShowToast(string msg)
-    {
-        statusMessage = msg;
-        StateHasChanged();
-        Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
-    }
-
-    private async Task<bool> CheckAccess(string module)
-    {
+    private async Task RunSql(string cs, string sql) {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
-            string sql = "SELECT su.IsEnabled FROM Organizations o JOIN SystemUpdates su ON o.PlanType = su.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
-            using SqlCommand cmd = new(sql, conn); cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@mod", module);
-            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
-        } catch { return false; }
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@oid", myOrgId); cmd.Parameters.AddWithValue("@t", newPromo.Title);
+            cmd.Parameters.AddWithValue("@d", newPromo.Description ?? ""); cmd.Parameters.AddWithValue("@c", newPromo.PromoCode ?? "");
+            cmd.Parameters.AddWithValue("@e", newPromo.ExpiryDate);
+            if (pendingPromo != null) cmd.Parameters.AddWithValue("@id", pendingPromo.Id);
+            await cmd.ExecuteNonQueryAsync();
+        } catch { }
     }
 
-    public class FeedbackModel { public string FacilityName { get; set; } = ""; public int Rating { get; set; } public string Comments { get; set; } = ""; public DateTime CreatedAt { get; set; } public string TenantName { get; set; } = ""; }
-    public class PromotionModel { public int Id { get; set; } public string Title { get; set; } = ""; public string Description { get; set; } = ""; public string PromoCode { get; set; } = ""; public DateTime ExpiryDate { get; set; } }
-    public class FacilityStat { public string FacilityName { get; set; } = ""; public double AvgRating { get; set; } public int TotalReviews { get; set; } }
+    private void ShowToast(string msg) { statusMessage = msg; StateHasChanged(); Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); }); }
+    private async Task<bool> CheckAccess(string m) {
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+        var res = await new SqlCommand($@"SELECT IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = {myOrgId} AND su.ModuleName = 'Feedback'", conn).ExecuteScalarAsync();
+        return res != null && Convert.ToBoolean(res);
+    }
+    private string GetRatingLabel(int val) => val switch { 5 => "5-Stars Excellent", 4 => "4-Stars Very Good", 3 => "3-Stars Average", 2 => "2-Stars Poor", 1 => "1-Star Terrible", _ => "Rating" };
+
+    public class FeedbackModel { public string FacilityName="", Comments="", TenantName=""; public int Rating; public DateTime CreatedAt; }
+    public class PromotionModel { public int Id; public string Title="", Description="", PromoCode=""; public DateTime ExpiryDate; }
+    public class FacilityStat { public string FacilityName=""; public double AvgRating; public int TotalReviews; }
 }
 
 
@@ -450,27 +391,25 @@ else
 
 
 <style>
+    /* RESTORED ORIGINAL ALIGNMENT AND CSS */
     .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; }
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
-    .page-header h1 { font-size: 32px; font-weight: 800; margin: 0; color: #111827; }
+    .page-header h1 { font-size: 32px; color: #111827; }
     .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
-
-    .search-input { padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 10px; font-size: 14px; width: 300px; outline: none; transition: 0.2s; background: white; }
-    .search-input:focus { border-color: #111827; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-
-    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
 
     .tab-container { display: inline-flex; background: #f3f4f6; padding: 4px; border-radius: 10px; margin-bottom: 30px; margin-top: 20px; }
     .tab-btn { padding: 10px 24px; border: none; background: transparent; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; color: #6b7280; }
-    .tab-btn.active { background: #fff; color: #111827; }
+    .tab-btn.active { background: #fff; color: #111827; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
 
     .tab-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
     .promo-actions-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
     
     .action-group { display: flex; align-items: center; gap: 12px; }
+    .search-input { padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 10px; font-size: 14px; width: 300px; outline: none; background: white; }
 
+    .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     .content-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; }
-    .section-title { font-size: 18px; font-weight: 800; color: #111827; margin: 0; }
+    .section-title { font-size: 18px; color: #111827; margin: 0; }
     .section-subtitle { font-size: 14px; color: #6b7280; margin: 4px 0 20px 0; }
 
     .stars-row { display: flex; gap: 2px; }
@@ -479,40 +418,21 @@ else
     .rating-display-group { display: flex; flex-direction: column; align-items: flex-end; }
     .rating-label-small { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-top: 4px; }
 
-    .btn-black { background: #111827; color: #fff; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 10px; transition: 0.2s; font-size: 14px; text-align: center; }
-    .btn-black:hover { background: #000; transform: translateY(-1px); }
-
-    .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .btn-black { background: #111827; color: #fff; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 700; cursor: pointer; }
     .rating-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #f3f4f6; }
-    .facility-name { font-weight: 600; font-size: 14px; display: block; }
-    .review-count { font-size: 12px; color: #6b7280; }
-
     .comment-item { padding: 16px 0; border-bottom: 1px solid #f3f4f6; }
-    .comment-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
-    .author { font-weight: 700; font-size: 14px; color: #111827; }
-    .comment-text { font-style: italic; color: #6b7280; font-size: 13px; margin: 4px 0; }
-    .comment-meta { font-size: 12px; color: #9ca3af; }
 
     .promos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-    .promo-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; position: relative; transition: 0.2s; }
-    .promo-card:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.05); }
-    .tag-icon { background: #f3f4f6; padding: 8px; border-radius: 8px; width: fit-content; }
+    .promo-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; position: relative; }
+    .promo-code-box { border: 2px dashed #e2e8f0; padding: 15px; border-radius: 12px; text-align: center; background: #f8fafc; margin: 20px 0; font-family: monospace; font-weight: 700; font-size: 16px; }
+    
     .delete-icon { position: absolute; top: 24px; right: 24px; }
-
-    .promo-code-box { border: 2px dashed #e2e8f0; padding: 15px; border-radius: 12px; text-align: center; background: #f8fafc; margin: 20px 0; }
-    .code-label { display: block; font-size: 10px; font-weight: 800; color: #6b7280; margin-bottom: 4px; }
-    .code-value { font-family: 'Inter', monospace; font-weight: 700; font-size: 16px; letter-spacing: 1px; color: #111827; }
-
-    .expiry { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; }
-
-    /* Custom Confirm Styles */
-    .confirm-icon { font-size: 32px; margin-bottom: 10px; }
-    .btn-danger-action { background: #dc2626; color: white; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; text-align: center; justify-content: center; }
-    .btn-danger-action:hover { background: #b91c1c; }
+    .tag-icon { background: #f3f4f6; padding: 8px; border-radius: 8px; width: fit-content; }
 
     .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9000; }
-    .modal-content { background: white; padding: 35px; border-radius: 20px; width: 480px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
-    .form-input { width: 100%; padding: 12px; margin-top: 6px; margin-bottom: 18px; border: 1px solid #e5e7eb; border-radius: 10px; font-size: 14px; box-sizing: border-box; }
-    .btn-details { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; text-align: center; justify-content: center; }
-    label { font-size: 13px; font-weight: 700; color: #374151; }
+    .modal-content { background: white; padding: 35px; border-radius: 20px; width: 480px; }
+    .form-input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #e5e7eb; border-radius: 10px; }
+    .btn-details { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; }
+    .btn-danger-action { background: #dc2626; color: white; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 700; }
+    .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; z-index: 99999; border-left: 4px solid #14b8a6; }
 </style>

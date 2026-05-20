@@ -27,7 +27,14 @@ else
         <header class="page-header">
             <div class="header-left">
                 <h1>Community & Feedback</h1>
-                <p class="subtitle">Explore active deals and share your experience with <strong>@Login.LoggedInOrgName</strong>.</p>
+                <p class="subtitle">
+                    @if (DbConfig.IsOnline) {
+                        <span class="conn-tag online"><span class="pulse-dot"></span> Online</span>
+                    } else {
+                        <span class="conn-tag offline">🌐 Offline</span>
+                    }
+                    • Explore active deals and share your experience with <strong>@Login.LoggedInOrgName</strong>.
+                </p>
             </div>
 
             <div class="header-right-group">
@@ -203,7 +210,6 @@ else
     private List<PromotionModel> promotions = new();
     private List<FeedbackModel> myFeedbackHistory = new();
 
-    // Confirmation State
     private bool showConfirmModal = false;
 
     private void SetRating(int val) => newFeedback.Rating = val;
@@ -217,22 +223,46 @@ else
         if (hasAccess) { 
             await LoadData(); 
             await LoadProfilePic(); 
+            // --- [ RECOVERY SYNC: OFFLINE -> ONLINE ] ---
+            if (DbConfig.IsOnline) { _ = SyncOfflineFeedback(); }
         }
         isChecking = false;
     }
 
+    private async Task SyncOfflineFeedback() {
+        try {
+            using SqlConnection local = new(DbConfig.GetLocalRaw); await local.OpenAsync();
+            // Fetch local feedback records
+            using var reader = await new SqlCommand($"SELECT FacilityName, Rating, Comments, CreatedAt FROM Feedback WHERE TenantId = {Login.LoggedInTenantId}", local).ExecuteReaderAsync();
+            
+            using SqlConnection online = new(DbConfig.ConnectionString); await online.OpenAsync();
+            while (await reader.ReadAsync()) {
+                // Existence check on online mirror based on timestamp and resident
+                string sql = @"IF NOT EXISTS (SELECT 1 FROM Feedback WHERE TenantId=@tid AND CAST(CreatedAt as smalldatetime) = CAST(@d as smalldatetime) AND FacilityName=@f)
+                               INSERT INTO Feedback (OrganizationId, FacilityName, Rating, Comments, TenantId, CreatedAt)
+                               VALUES (@oid, @f, @r, @c, @tid, @d)";
+                using SqlCommand cmd = new(sql, online);
+                cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+                cmd.Parameters.AddWithValue("@f", reader.GetString(0));
+                cmd.Parameters.AddWithValue("@r", reader.GetInt32(1));
+                cmd.Parameters.AddWithValue("@c", reader.IsDBNull(2) ? "" : reader.GetString(2));
+                cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+                cmd.Parameters.AddWithValue("@d", reader.GetDateTime(3));
+                await cmd.ExecuteNonQueryAsync();
+            }
+        } catch { }
+    }
+
     private async Task<bool> CheckModuleAccess(string mod) {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
-            string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
-            using SqlCommand cmd = new(sql, conn);
-            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId); cmd.Parameters.AddWithValue("@mod", mod);
-            var res = await cmd.ExecuteScalarAsync(); return res != null && Convert.ToBoolean(res);
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+            var res = await new SqlCommand($@"SELECT IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = {Login.LoggedInOrgId} AND su.ModuleName = '{mod}'", conn).ExecuteScalarAsync();
+            return res != null && Convert.ToBoolean(res);
         } catch { return false; }
     }
 
     private async Task LoadData() {
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
         if (ActiveTab == 1) {
             promotions.Clear();
             string pSql = "SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = @oid AND ExpiryDate >= CAST(GETDATE() AS DATE) ORDER BY CreatedAt DESC";
@@ -246,7 +276,6 @@ else
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync()) myFeedbackHistory.Add(new FeedbackModel { FacilityName = r.GetString(0), Rating = r.GetInt32(1), Comments = r.GetString(2), CreatedAt = r.GetDateTime(3) });
         }
-        StateHasChanged();
     }
 
     private void TriggerFeedbackConfirm() {
@@ -256,18 +285,33 @@ else
 
     private async Task ExecuteSubmitFeedback() {
         showConfirmModal = false;
+        string sql = "INSERT INTO Feedback (OrganizationId, FacilityName, Rating, Comments, TenantId, CreatedAt) VALUES (@oid, @f, @r, @c, @tid, GETDATE())";
+        
+        // --- [ DUAL WRITE ] ---
+        await RunSqlDual(sql);
+        
+        newFeedback = new FeedbackModel { Rating = 5 }; 
+        await LoadData(); 
+        ShowToast("Feedback submitted!");
+    }
+
+    private async Task RunSqlDual(string sql) {
+        // 1. Local Master
+        await RunSingleFeedbackSql(DbConfig.GetLocalRaw, sql);
+        // 2. Online Mirror
+        if (DbConfig.IsOnline) { await RunSingleFeedbackSql(DbConfig.ConnectionString, sql); }
+    }
+
+    private async Task RunSingleFeedbackSql(string cs, string sql) {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
-            string sql = "INSERT INTO Feedback (OrganizationId, FacilityName, Rating, Comments, TenantId, CreatedAt) VALUES (@oid, @f, @r, @c, @tid, GETDATE())";
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
             using SqlCommand cmd = new(sql, conn);
-            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId); cmd.Parameters.AddWithValue("@f", newFeedback.FacilityName);
-            cmd.Parameters.AddWithValue("@r", newFeedback.Rating); cmd.Parameters.AddWithValue("@c", newFeedback.Comments ?? "");
+            cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
+            cmd.Parameters.AddWithValue("@f", newFeedback.FacilityName);
+            cmd.Parameters.AddWithValue("@r", newFeedback.Rating);
+            cmd.Parameters.AddWithValue("@c", newFeedback.Comments ?? "");
             cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId); 
             await cmd.ExecuteNonQueryAsync();
-            
-            newFeedback = new FeedbackModel { Rating = 5 }; 
-            await LoadData(); 
-            ShowToast("Feedback submitted!");
         } catch { }
     }
 
@@ -277,25 +321,31 @@ else
         var buffer = new byte[resized.Size];
         using var stream = resized.OpenReadStream(); await stream.ReadAsync(buffer);
         profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
-        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-        await cmd.ExecuteNonQueryAsync();
+        
+        // --- [ DUAL WRITE PIC ] ---
+        await RunPicUpdate(DbConfig.GetLocalRaw);
+        if (DbConfig.IsOnline) { await RunPicUpdate(DbConfig.ConnectionString); }
+    }
+
+    private async Task RunPicUpdate(string cs) {
+        try {
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
+            using SqlCommand cmd = new("UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid", conn);
+            cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            await cmd.ExecuteNonQueryAsync();
+        } catch { }
     }
 
     private async Task LoadProfilePic() {
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
-        string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-        profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+        profilePicBase64 = (await new SqlCommand($"SELECT ProfilePicture FROM Tenants WHERE Id = {Login.LoggedInTenantId}", conn).ExecuteScalarAsync())?.ToString() ?? "";
     }
 
     private async Task SwitchTab(int tab) { ActiveTab = tab; await LoadData(); }
     private void ShowToast(string msg) { statusMessage = msg; StateHasChanged(); Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); }); }
-    public class FeedbackModel { public string FacilityName { get; set; } = ""; public int Rating { get; set; } public string Comments { get; set; } = ""; public DateTime CreatedAt { get; set; } }
+    public class FeedbackModel { public string FacilityName { get; set; } = ""; public int Rating { get; set; } public string Comments { get; set; } = ""; public DateTime CreatedAt { get; set; } public string TenantName { get; set; } = ""; }
     public class PromotionModel { public string Title { get; set; } = ""; public string Description { get; set; } = ""; public string PromoCode { get; set; } = ""; public DateTime ExpiryDate { get; set; } }
+    public class FacilityStat { public string FacilityName { get; set; } = ""; public double AvgRating { get; set; } public int TotalReviews { get; set; } }
 }
 
 
@@ -323,7 +373,17 @@ else
 
 
 
+
+
+
 <style>
+     /* Connection Tag Style */
+    .conn-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: #10b981; }
+    .conn-tag.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; top:0; left:0; right:0; bottom:0; background: inherit; border-radius: 50%; animation: pulse-promo-t-sync 1.5s infinite; }
+    @@keyframes pulse-promo-t-sync { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
+
     .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
     .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
     .header-left h1 { font-size: 28px; font-weight: 800; color: #111827; margin: 0; }

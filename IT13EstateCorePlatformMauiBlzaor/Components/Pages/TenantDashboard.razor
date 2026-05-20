@@ -22,7 +22,14 @@ else
         <header class="page-header">
             <div class="header-left">
                 <h1>Welcome back, @Login.LoggedInName!</h1>
-                <p class="subtitle">@Login.LoggedInOrgName • Resident of @unitNumber</p>
+                <p class="subtitle">
+                    @if (DbConfig.IsOnline) {
+                        <span class="conn-tag online"><span class="pulse-dot"></span> Online</span>
+                    } else {
+                        <span class="conn-tag offline">🌐 Offline</span>
+                    }
+                    • @Login.LoggedInOrgName • Resident of @unitNumber
+                </p>
             </div>
 
             <div class="header-right-group">
@@ -300,14 +307,31 @@ else
         {
             await LoadTenantDashboardData();
             await LoadProfilePic();
+            
+            // [ RECOVERY SYNC ]
+            if (DbConfig.IsOnline) { _ = SyncProfilePic(); }
         }
         isChecking = false;
+    }
+
+    private async Task SyncProfilePic() {
+        try {
+            using SqlConnection local = new(DbConfig.GetLocalRaw); await local.OpenAsync();
+            string pic = (await new SqlCommand($"SELECT ProfilePicture FROM Tenants WHERE Id = {Login.LoggedInTenantId}", local).ExecuteScalarAsync())?.ToString() ?? "";
+            
+            if(!string.IsNullOrEmpty(pic)) {
+                using SqlConnection online = new(DbConfig.ConnectionString); await online.OpenAsync();
+                using SqlCommand cmd = new("UPDATE Tenants SET ProfilePicture = @p WHERE Id = @tid", online);
+                cmd.Parameters.AddWithValue("@p", pic); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+                await cmd.ExecuteNonQueryAsync();
+            }
+        } catch { }
     }
 
     private async Task<bool> CheckModuleAccess(string mod)
     {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
             string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
             using SqlCommand cmd = new(sql, conn);
             cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
@@ -326,18 +350,24 @@ else
         await stream.ReadAsync(buffer);
         profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
 
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
-        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@pic", profilePicBase64);
-        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-        await cmd.ExecuteNonQueryAsync();
+        // [ DUAL WRITE ]
+        await RunUpdatePic(DbConfig.GetLocalRaw);
+        if (DbConfig.IsOnline) { await RunUpdatePic(DbConfig.ConnectionString); }
+    }
+
+    private async Task RunUpdatePic(string cs) {
+        try {
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
+            using SqlCommand cmd = new("UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid", conn);
+            cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            await cmd.ExecuteNonQueryAsync();
+        } catch { }
     }
 
     private async Task LoadProfilePic()
     {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
             string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
             using SqlCommand cmd = new(sql, conn);
             cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
@@ -350,7 +380,7 @@ else
         try
         {
             activities.Clear(); announcements.Clear(); dashboardPromos.Clear();
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
 
             using SqlCommand cmdUnit = new("SELECT UnitNumber FROM Tenants WHERE Id = @tid", conn);
             cmdUnit.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
@@ -373,14 +403,11 @@ else
             }
             await reader.CloseAsync();
 
-            string annSql = "SELECT Title, Message, IsUrgent, CreatedAt FROM Announcements WHERE OrganizationId = @oid ORDER BY CreatedAt DESC";
-            using SqlCommand cmdAnn = new(annSql, conn);
-            cmdAnn.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
-            using var readerAnn = await cmdAnn.ExecuteReaderAsync();
+            using var readerAnn = await new SqlCommand($"SELECT Title, Message, IsUrgent, CreatedAt FROM Announcements WHERE OrganizationId = {Login.LoggedInOrgId} ORDER BY CreatedAt DESC", conn).ExecuteReaderAsync();
             while (await readerAnn.ReadAsync()) {
                 announcements.Add(new AnnModel { Title = readerAnn.GetString(0), Message = readerAnn.GetString(1), IsUrgent = readerAnn.GetBoolean(2), Date = readerAnn.GetDateTime(3)});
             }
-            await readerAnn.CloseAsync();
+            readerAnn.Close();
 
             string actSql = @"
                 SELECT 'Bill Generated: ' + Type, CreatedAt, 'billing' FROM Billings WHERE TenantId = @tid
@@ -389,23 +416,19 @@ else
                 UNION
                 SELECT 'Booking: ' + FacilityName, CreatedAt, 'reservation' FROM Reservations WHERE TenantId = @tid
                 ORDER BY CreatedAt DESC";
-            using SqlCommand cmdAct = new(actSql, conn);
-            cmdAct.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-            using var readerAct = await cmdAct.ExecuteReaderAsync();
+            using var readerAct = await new SqlCommand(actSql, conn) { Parameters = { new("@tid", Login.LoggedInTenantId) } }.ExecuteReaderAsync();
             while (await readerAct.ReadAsync()){
                 activities.Add(new ActivityModel { Text = readerAct.GetString(0), Time = readerAct.GetDateTime(1), Icon = readerAct.GetString(2) });
             }
-            await readerAct.CloseAsync();
+            readerAct.Close();
 
-            string pSql = "SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = @oid AND ExpiryDate >= CAST(GETDATE() AS DATE) ORDER BY CreatedAt DESC";
-            using SqlCommand cmdPromo = new(pSql, conn);
-            cmdPromo.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
-            using var rP = await cmdPromo.ExecuteReaderAsync();
-            while (await rP.ReadAsync()) {
-                dashboardPromos.Add(new PromoModel { Title = rP.GetString(0), Description = rP.GetString(1), PromoCode = rP.GetString(2), ExpiryDate = rP.GetDateTime(3) });
+            using var readerP = await new SqlCommand($"SELECT Title, Description, PromoCode, ExpiryDate FROM Promotions WHERE OrganizationId = {Login.LoggedInOrgId} AND ExpiryDate >= CAST(GETDATE() AS DATE) ORDER BY CreatedAt DESC", conn).ExecuteReaderAsync();
+            while (await readerP.ReadAsync()) {
+                dashboardPromos.Add(new PromoModel { Title = readerP.GetString(0), Description = readerP.GetString(1), PromoCode = readerP.GetString(2), ExpiryDate = readerP.GetDateTime(3) });
             }
+            readerP.Close();
         }
-        catch (Exception ex) { Console.WriteLine(ex.Message); }
+        catch { }
     }
 
     public class AnnModel { public string Title { get; set; } = ""; public string Message { get; set; } = ""; public bool IsUrgent { get; set; } public DateTime Date { get; set; } }
@@ -428,6 +451,12 @@ else
 
 
 <style>
+    .conn-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: #10b981; }
+    .conn-tag.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; top:0; left:0; right:0; bottom:0; background: inherit; border-radius: 50%; animation: pulse-tenant-dash 1.5s infinite; }
+    @@keyframes pulse-tenant-dash { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
+
     .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
     .peso-bold { font-family: "Arial", "Segoe UI", sans-serif !important; font-weight: 800; margin-right: 2px; }
 

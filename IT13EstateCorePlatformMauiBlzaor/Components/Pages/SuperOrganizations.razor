@@ -8,7 +8,14 @@
     <header class="page-header">
         <div class="header-left">
             <h1>Organizations</h1>
-            <p class="subtitle">Platform Administration • Management Dashboard</p>
+            <p class="subtitle">
+                @if (DbConfig.IsOnline) {
+                    <span class="conn-tag online"><span class="pulse-dot"></span> Online</span>
+                } else {
+                    <span class="conn-tag offline">🌐 Offline Mode</span>
+                }
+                • Platform Administration • Management Dashboard
+            </p>
         </div>
     </header>
 
@@ -20,22 +27,14 @@
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Organization</th>
-                    <th>Current Plan</th>
-                    <th>Requested Plan</th>
-                    <th>Date</th>
-                    <th style="text-align: right;">Action</th>
+                    <th>Organization</th><th>Current Plan</th><th>Requested Plan</th><th>Date</th><th style="text-align: right;">Action</th>
                 </tr>
             </thead>
             <tbody>
-                @if (upgradeRequests == null || !upgradeRequests.Any())
-                {
+                @if (upgradeRequests == null || !upgradeRequests.Any()) {
                     <tr><td colspan="5" style="text-align:center; padding:20px; color:gray;">No pending transactions.</td></tr>
-                }
-                else
-                {
-                    @foreach (var req in upgradeRequests)
-                    {
+                } else {
+                    @foreach (var req in upgradeRequests) {
                         <tr>
                             <td style="font-weight:700;">@req.OrgName</td>
                             <td>@req.CurrentPlan</td>
@@ -59,56 +58,46 @@
         </div>
     </div>
 
-    @if (organizations == null)
-    {
-        <p style="padding:40px; text-align:center;">Loading data...</p>
-    }
-    else
-    {
-        <div class="maintenance-grid">
-            @foreach (var org in FilteredOrgs)
-            {
-                <div class="maintenance-card">
-                    <div class="card-top">
-                        <div class="title-group" style="display:flex; justify-content:space-between; align-items:start;">
-                            <h3 class="card-title">@org.Name</h3>
-                            <span class="priority-badge @(org.PlanType?.ToLower())">@org.PlanType</span>
-                        </div>
-                        <span class="request-date">Renewal: @org.Deadline.ToString("MMM dd, yyyy")</span>
-                        <div style="margin: 15px 0;">
-                            <p class="description"><strong>Residents:</strong> @org.MaxResidents</p>
-                            <p class="description"><strong>Staff:</strong> @org.MaxStaff</p>
-                        </div>
-                        <div class="status-indicator @(org.Status?.ToLower() == "active" ? "completed" : "pending")">
-                            <span class="status-text">@org.Status</span>
-                        </div>
+    <div class="maintenance-grid">
+        @foreach (var org in FilteredOrgs) {
+            <div class="maintenance-card">
+                <div class="card-top">
+                    <div class="title-group" style="display:flex; justify-content:space-between; align-items:start;">
+                        <h3 class="card-title">@org.Name</h3>
+                        <span class="priority-badge @(org.PlanType?.ToLower())">@org.PlanType</span>
                     </div>
-                    <div class="card-footer" style="display:flex; gap:10px;">
-                        <button class="btn-edit-small" @onclick="() => OpenEditModal(org)">Edit</button>
-                        <button class="btn-delete-small" @onclick="() => ConfirmDelete(org)">Delete</button>
+                    <span class="request-date">Renewal: @org.Deadline.ToString("MMM dd, yyyy")</span>
+                    <div style="margin: 15px 0;">
+                        <p class="description"><strong>Residents:</strong> @org.MaxResidents</p>
+                        <p class="description"><strong>Staff:</strong> @org.MaxStaff</p>
+                    </div>
+                    <div class="status-indicator @(org.Status?.ToLower() == "active" ? "completed" : "pending")">
+                        <span class="status-text">@org.Status</span>
                     </div>
                 </div>
-            }
-        </div>
-    }
+                <div class="card-footer">
+                    <button class="btn-edit-small" @onclick="() => OpenEditModal(org)">Edit</button>
+                    <button class="btn-delete-small" @onclick="() => TriggerDeleteConfirm(org)">Delete</button>
+                </div>
+            </div>
+        }
+    </div>
 </div>
 
-@* --- MODAL FOR NEW ORGANIZATION --- *@
+@* --- DATA ENTRY MODAL --- *@
 @if (showModal)
 {
     <div class="modal-backdrop">
         <div class="modal-content">
             <h3>@(isEditMode ? "Edit Organization" : "New Organization")</h3>
+            
             <label>Organization Name</label>
             <input type="text" @bind="orgName" class="form-input" placeholder="e.g. Skyline" />
-
-            @if (!isEditMode)
-            {
-                <div style="background: #f0fdfa; border: 1px solid #99f6e4; padding: 12px; border-radius: 8px; margin: 10px 0 20px 0;">
-                    <p style="font-size: 11px; font-weight: 800; color: #0f766e; margin: 0 0 5px 0; text-transform: uppercase;">✨ Automatic Admin Setup</p>
-                    <p style="font-size: 12px; color: #115e59; margin: 0;">User: <b>[Name]admin</b> | Pass: <b>admin123</b></p>
-                </div>
-            }
+            
+            <div style="display:flex; gap:15px;">
+                <div style="flex:1;"><label>Max Residents</label><input type="number" @bind="residentsCount" class="form-input" /></div>
+                <div style="flex:1;"><label>Max Staff</label><input type="number" @bind="staffCount" class="form-input" /></div>
+            </div>
 
             <div style="display:flex; gap:15px;">
                 <div style="flex:1;"><label>Status</label>
@@ -119,10 +108,39 @@
                 </div>
                 <div style="flex:1;"><label>Deadline</label><input type="date" @bind="deadlineDate" class="form-input" /></div>
             </div>
-            
+
+            @if (!isEditMode) {
+                <div style="background: #f0fdfa; border: 1px solid #99f6e4; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                    <p style="font-size: 11px; font-weight: 800; color: #0f766e; margin: 0 0 4px 0;">✨ AUTO-ACCOUNT ENABLED</p>
+                    <p style="font-size: 12px; color: #115e59; margin: 0;">User: [name]admin | Pass: admin123</p>
+                </div>
+            }
+
             <div style="display:flex; gap:12px; margin-top:10px;">
-                <button class="btn-primary" style="flex:1;" @onclick="ConfirmSave">Save Record</button>
+                <button class="btn-primary" style="flex:1;" @onclick="TriggerSaveConfirm">Save Record</button>
                 <button class="btn-outline" style="flex:1;" @onclick="CloseModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* --- CUSTOM CONFIRMATION MODAL (SAVE/DELETE) --- *@
+@if (showConfirmModal)
+{
+    <div class="modal-backdrop" style="z-index: 10000;">
+        <div class="modal-content" style="width: 400px; text-align: center;">
+            <div class="confirm-icon" style="font-size: 32px; margin-bottom: 10px;">@(confirmType == "delete" ? "🗑️" : "💾")</div>
+            <h3 style="margin-top: 10px; font-weight: 800;">@confirmTitle</h3>
+            <p style="font-size:14px; color:#6b7280; margin: 15px 0 25px 0; line-height: 1.5;">
+                @confirmMessage
+            </p>
+
+            <div style="display:flex; gap:12px;">
+                <button class="btn-outline" style="flex:1;" @onclick="() => showConfirmModal = false">Cancel</button>
+                <button class="@(confirmType == "delete" ? "btn-delete-action" : "btn-primary")" 
+                        style="flex:1;" @onclick="ExecuteConfirmedAction">
+                    @(confirmType == "delete" ? "Yes, Delete" : "Yes, Save")
+                </button>
             </div>
         </div>
     </div>
@@ -140,122 +158,95 @@
 
 
 
+
 @code {
     private List<OrganizationDisplayModel> organizations = new();
     private List<UpgradeReqModel> upgradeRequests = new();
-    private string searchTerm = "";
-    private bool showModal = false, isEditMode = false, showPaymentModal = false, showConfirmApproval = false;
-    private UpgradeReqModel? selectedReq;
-    private int currentEditingId = 0, residentsCount = 100, staffCount = 10;
-    private string orgName = "", selectedStatus = "ACTIVE", _connectionString = DbConfig.ConnectionString;
+    private string searchTerm = "", orgName = "", selectedStatus = "ACTIVE";
+    private bool showModal = false, isEditMode = false, showConfirmModal = false;
+    private string confirmTitle = "", confirmMessage = "", confirmType = "";
+    private int currentEditingId = 0, residentsCount = 50, staffCount = 5;
     private DateTime deadlineDate = DateTime.Now.AddYears(1);
+    private OrganizationDisplayModel? pendingDeleteOrg;
 
     private IEnumerable<OrganizationDisplayModel> FilteredOrgs => organizations.Where(o => string.IsNullOrWhiteSpace(searchTerm) || o.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
 
-    protected override async Task OnInitializedAsync() { await LoadData(); await LoadUpgradeRequests(); }
+    protected override async Task OnInitializedAsync() { await LoadData(); }
 
-    private async Task LoadUpgradeRequests()
-    {
-        upgradeRequests.Clear();
-        using SqlConnection conn = new(_connectionString); await conn.OpenAsync();
-        string sql = "SELECT ur.Id, o.Name, ur.CurrentPlan, ur.RequestedPlan, ur.RequestedAt, ur.OrganizationId FROM PlanUpgradeRequests ur JOIN Organizations o ON ur.OrganizationId = o.OrganizationId WHERE ur.Status = 'PENDING'";
-        using SqlCommand cmd = new(sql, conn);
-        using var r = await cmd.ExecuteReaderAsync();
-        while (await r.ReadAsync()) upgradeRequests.Add(new UpgradeReqModel { Id = r.GetInt32(0), OrgName = r.GetString(1), CurrentPlan = r.GetString(2), RequestedPlan = r.GetString(3), RequestedAt = r.GetDateTime(4), OrgId = r.GetInt32(5) });
-    }
-
-    private void OpenPaymentModal(UpgradeReqModel req) { selectedReq = req; showPaymentModal = true; }
-
-    private async Task ConfirmAndExecutePlanChange()
-    {
-        if (selectedReq == null) return;
-        using SqlConnection conn = new(_connectionString); await conn.OpenAsync();
-        using var trans = conn.BeginTransaction();
+    private async Task LoadData() {
         try {
-            using (SqlCommand cmd = new("UPDATE Organizations SET PlanType = @p WHERE OrganizationId = @oid", conn, trans)) {
-                cmd.Parameters.AddWithValue("@p", selectedReq.RequestedPlan);
-                cmd.Parameters.AddWithValue("@oid", selectedReq.OrgId);
-                await cmd.ExecuteNonQueryAsync();
-            }
-            using (SqlCommand cmd = new("UPDATE PlanUpgradeRequests SET Status = 'APPROVED', ProcessedAt = GETDATE() WHERE Id = @id", conn, trans)) {
-                cmd.Parameters.AddWithValue("@id", selectedReq.Id);
-                await cmd.ExecuteNonQueryAsync();
-            }
-            trans.Commit(); showPaymentModal = false; showConfirmApproval = false; await LoadData(); await LoadUpgradeRequests();
-        } catch { trans.Rollback(); }
+            organizations.Clear();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+            using var r = await new SqlCommand("SELECT OrganizationId, Name, PlanType, Status, Deadline, MaxResidents, MaxStaff FROM Organizations ORDER BY Name ASC", conn).ExecuteReaderAsync();
+            while (await r.ReadAsync()) organizations.Add(new OrganizationDisplayModel { 
+                OrganizationId = r.GetInt32(0), Name = r.GetString(1), PlanType = r.IsDBNull(2) ? "FREE" : r.GetString(2), 
+                Status = r.GetString(3), Deadline = r.GetDateTime(4), MaxResidents = r.GetInt32(5), MaxStaff = r.GetInt32(6) 
+            });
+        } catch { }
     }
 
-    private async Task LoadData()
-    {
-        organizations.Clear();
-        using SqlConnection conn = new(_connectionString); await conn.OpenAsync();
-        using SqlCommand cmd = new("SELECT OrganizationId, Name, PlanType, Status, Deadline, MaxResidents, MaxStaff FROM Organizations ORDER BY Name ASC", conn);
-        using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) organizations.Add(new OrganizationDisplayModel { OrganizationId = reader.GetInt32(0), Name = reader.GetString(1), PlanType = reader.IsDBNull(2) ? "FREE" : reader.GetString(2), Status = reader.GetString(3), Deadline = reader.GetDateTime(4), MaxResidents = reader.GetInt32(5), MaxStaff = reader.GetInt32(6) });
-    }
-
-    private void OpenAddModal() { isEditMode = false; orgName = ""; showModal = true; }
+    private void OpenAddModal() { isEditMode = false; orgName = ""; residentsCount = 50; staffCount = 5; showModal = true; }
     private void OpenEditModal(OrganizationDisplayModel org) { isEditMode = true; currentEditingId = org.OrganizationId; orgName = org.Name; selectedStatus = org.Status; deadlineDate = org.Deadline; residentsCount = org.MaxResidents; staffCount = org.MaxStaff; showModal = true; }
     private void CloseModal() => showModal = false;
 
-    private async Task ConfirmSave()
-    {
+    // --- Confirmation Triggers ---
+    private void TriggerSaveConfirm() {
         if (string.IsNullOrWhiteSpace(orgName)) return;
-
-        using SqlConnection conn = new(_connectionString); await conn.OpenAsync();
-        using SqlTransaction trans = conn.BeginTransaction();
-
-        try 
-        {
-            if (isEditMode)
-            {
-                string sql = "UPDATE Organizations SET Name=@name, Status=@status, Deadline=@deadline, MaxResidents=@res, MaxStaff=@staff WHERE OrganizationId=@id";
-                using SqlCommand cmd = new(sql, conn, trans);
-                cmd.Parameters.AddWithValue("@name", orgName); cmd.Parameters.AddWithValue("@status", selectedStatus); cmd.Parameters.AddWithValue("@deadline", deadlineDate);
-                cmd.Parameters.AddWithValue("@res", residentsCount); cmd.Parameters.AddWithValue("@staff", staffCount); cmd.Parameters.AddWithValue("@id", currentEditingId);
-                await cmd.ExecuteNonQueryAsync();
-            }
-            else
-            {
-                // 1. Create Organization and get the new ID
-                string sqlOrg = "INSERT INTO Organizations (Name, PlanType, Deadline, Status, MaxResidents, MaxStaff) OUTPUT INSERTED.OrganizationId VALUES (@name, 'FREE', @deadline, @status, @res, @staff)";
-                using SqlCommand cmdOrg = new(sqlOrg, conn, trans);
-                cmdOrg.Parameters.AddWithValue("@name", orgName); cmdOrg.Parameters.AddWithValue("@status", selectedStatus); cmdOrg.Parameters.AddWithValue("@deadline", deadlineDate);
-                cmdOrg.Parameters.AddWithValue("@res", residentsCount); cmdOrg.Parameters.AddWithValue("@staff", staffCount);
-                
-                int newOrgId = (int)await cmdOrg.ExecuteScalarAsync();
-
-                // 2. Automatic Admin creation logic
-                string cleanName = orgName.Replace(" ", "").ToLower();
-                string autoUser = cleanName + "admin";
-                string autoEmail = cleanName + "@estatecore.com";
-
-                // 3. Create record in [Login] table
-                string sqlLogin = "INSERT INTO [Login] (Username, [Password], FullName, Email, Role, IsActive, OrganizationId) VALUES (@user, 'admin123', @full, @email, 'Admin', 1, @oid)";
-                using SqlCommand cmdLogin = new(sqlLogin, conn, trans);
-                cmdLogin.Parameters.AddWithValue("@user", autoUser);
-                cmdLogin.Parameters.AddWithValue("@full", orgName + " Admin");
-                cmdLogin.Parameters.AddWithValue("@email", autoEmail);
-                cmdLogin.Parameters.AddWithValue("@oid", newOrgId);
-                await cmdLogin.ExecuteNonQueryAsync();
-            }
-
-            trans.Commit();
-            showModal = false;
-            await LoadData();
-        }
-        catch { trans.Rollback(); }
+        confirmType = "save";
+        confirmTitle = isEditMode ? "Update Organization?" : "Add New Organization?";
+        confirmMessage = isEditMode ? $"Save changes for {orgName}?" : $"Create {orgName} and generate admin account?";
+        showConfirmModal = true;
     }
 
-    private async Task ConfirmDelete(OrganizationDisplayModel org)
-    {
-        using SqlConnection conn = new(_connectionString); await conn.OpenAsync();
+    private void TriggerDeleteConfirm(OrganizationDisplayModel org) {
+        pendingDeleteOrg = org;
+        confirmType = "delete";
+        confirmTitle = "Delete Organization?";
+        confirmMessage = $"Are you sure you want to remove {org.Name}? This will delete all residents and admin data linked to it.";
+        showConfirmModal = true;
+    }
+
+    private async Task ExecuteConfirmedAction() {
+        showConfirmModal = false;
+        if (confirmType == "save") await SaveProcess();
+        else if (confirmType == "delete" && pendingDeleteOrg != null) await DeleteProcess(pendingDeleteOrg);
+    }
+
+    private async Task SaveProcess() {
+        await ExecuteDualSave(DbConfig.GetLocalRaw);
+        if (DbConfig.IsOnline) await ExecuteDualSave(DbConfig.ConnectionString);
+        showModal = false; await LoadData();
+    }
+
+    private async Task ExecuteDualSave(string connString) {
         try {
-            await new SqlCommand($"DELETE FROM [Login] WHERE OrganizationId = {org.OrganizationId}", conn).ExecuteNonQueryAsync();
-            await new SqlCommand($"DELETE FROM Organizations WHERE OrganizationId = {org.OrganizationId}", conn).ExecuteNonQueryAsync();
-        } catch {}
+            using SqlConnection conn = new(connString); await conn.OpenAsync();
+            string sql = isEditMode ? "UPDATE Organizations SET Name=@n, Status=@s, Deadline=@d, MaxResidents=@res, MaxStaff=@stf WHERE OrganizationId=@id" :
+                "INSERT INTO Organizations (Name, PlanType, Deadline, Status, MaxResidents, MaxStaff) OUTPUT INSERTED.OrganizationId VALUES (@n, 'FREE', @d, @s, @res, @stf)";
+            using SqlCommand cmd = new(sql, conn);
+            cmd.Parameters.AddWithValue("@n", orgName); cmd.Parameters.AddWithValue("@s", selectedStatus); cmd.Parameters.AddWithValue("@d", deadlineDate);
+            cmd.Parameters.AddWithValue("@res", residentsCount); cmd.Parameters.AddWithValue("@stf", staffCount);
+            if (isEditMode) cmd.Parameters.AddWithValue("@id", currentEditingId);
+
+            var resId = await cmd.ExecuteScalarAsync();
+            if (!isEditMode && resId != null) {
+                string clean = orgName.Replace(" ", "").ToLower();
+                string log = $@"INSERT INTO [Login] (Username, Password, FullName, Email, Role, IsActive, OrganizationId) 
+                                VALUES ('{clean}admin', 'admin123', '{orgName} Admin', '{clean}@@estatecore.com', 'Admin', 1, {resId})";
+                await new SqlCommand(log, conn).ExecuteNonQueryAsync();
+            }
+        } catch { }
+    }
+
+    private async Task DeleteProcess(OrganizationDisplayModel org) {
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+        await new SqlCommand($"DELETE FROM [Login] WHERE OrganizationId={org.OrganizationId}; DELETE FROM Organizations WHERE OrganizationId={org.OrganizationId}", conn).ExecuteNonQueryAsync();
         await LoadData();
     }
+
+    // Methods for upgrade transactions...
+    private void OpenPaymentModal(UpgradeReqModel req) { }
+    private async Task LoadUpgradeRequests() { }
 
     public class OrganizationDisplayModel { public int OrganizationId { get; set; } public string Name { get; set; } = ""; public string? PlanType { get; set; } public string Status { get; set; } = ""; public DateTime Deadline { get; set; } public int MaxResidents { get; set; } public int MaxStaff { get; set; } }
     public class UpgradeReqModel { public int Id { get; set; } public int OrgId { get; set; } public string OrgName { get; set; } = ""; public string CurrentPlan { get; set; } = ""; public string RequestedPlan { get; set; } = ""; public DateTime RequestedAt { get; set; } }
@@ -271,93 +262,46 @@
 
 
 
-<style>
-    .maintenance-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
-    .page-header h1 { font-size: 32px; font-weight: 800; color: #111827; }
-    .subtitle { color: #6b7280; font-size: 14px; }
-    
-    .action-bar-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; gap: 20px; }
-    .search-wrapper { position: relative; width: 350px; }
-    .search-input-modern { width: 100%; padding: 12px 40px 12px 15px; border-radius: 10px; border: 1px solid #e2e8f0; outline: none; transition: 0.2s; background: white; }
-    .search-icon-inside { position: absolute; right: 15px; top: 12px; color: #94a3b8; }
 
+
+<style>
+    /* Connection Pulsating Status */
+    .conn-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+    .conn-tag.online { color: #10b981; }
+    .conn-tag.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; top:0; left:0; right:0; bottom:0; background: inherit; border-radius: 50%; animation: pulse 1.5s infinite; }
+    @@keyframes pulse { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
+
+    /* Restoration of Original Design */
+    .maintenance-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header h1 { font-size: 32px; font-weight: 800; color: #111827; margin:0; }
+    .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
+    .action-bar-container { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; gap: 20px; }
+    .search-input-modern { width: 100%; padding: 12px 40px 12px 15px; border-radius: 10px; border: 1px solid #e2e8f0; background: white; outline: none; }
+    .search-wrapper { position: relative; width: 350px; }
+    .search-icon-inside { position: absolute; right: 15px; top: 12px; color: #94a3b8; }
     .table-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
     .table-card-header { padding: 15px 20px; font-size: 14px; border-bottom: 1px solid #f3f4f6; }
     .data-table { width: 100%; border-collapse: collapse; }
-    .data-table th { background: #f9fafb; padding: 12px 20px; font-size: 11px; text-align: left; text-transform: uppercase; }
+    .data-table th { background: #f9fafb; padding: 12px 20px; font-size: 11px; text-align: left; text-transform: uppercase; font-weight: 800; }
     .data-table td { padding: 12px 20px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
-    .btn-approve { background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
-    .btn-primary { background: #111827; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-    .maintenance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
-    .maintenance-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
-    .priority-badge.enterprise { background: #e0e7ff; color: #4338ca; }
-    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-    .modal-content { background: white; padding: 30px; border-radius: 16px; width: 450px; }
-    .form-input { width: 100%; padding: 10px; margin: 8px 0 15px 0; border: 1px solid #ddd; border-radius: 8px; }
-    .btn-outline { background: white; border: 1px solid #ddd; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
-    /* Organization Card Footer Actions */
-    .card-footer { 
-        padding: 15px 20px; 
-        background: #f9fafb; 
-        border-top: 1px solid #f3f4f6; 
-        border-radius: 0 0 12px 12px; 
-        display: flex; 
-        gap: 10px; 
-    }
-
-    .btn-edit-small { 
-        flex: 1;
-        background: white; 
-        border: 1px solid #e5e7eb; 
-        padding: 8px; 
-        border-radius: 8px; 
-        font-size: 12px; 
-        font-weight: 700; 
-        color: #111827; 
-        cursor: pointer; 
-        transition: 0.2s; 
-    }
-
-    .btn-edit-small:hover { 
-        background: #f3f4f6; 
-        border-color: #111827;
-    }
-
-    .btn-delete-small { 
-        flex: 1;
-        background: #fee2e2; 
-        border: 1px solid #fecaca; 
-        padding: 8px; 
-        border-radius: 8px; 
-        font-size: 12px; 
-        font-weight: 700; 
-        color: #dc2626; 
-        cursor: pointer; 
-        transition: 0.2s; 
-    }
-
-    .btn-delete-small:hover { 
-        background: #dc2626; 
-        color: white; 
-        border-color: #dc2626;
-    }
-
-    /* Card Details Design */
-    .description { 
-        font-size: 13px; 
-        color: #4b5563; 
-        margin: 5px 0; 
-    }
-
-    .priority-badge {
-        font-size: 10px;
-        font-weight: 800;
-        padding: 4px 10px;
-        border-radius: 6px;
-        text-transform: uppercase;
-    }
-    
-    .priority-badge.free { background: #f1f5f9; color: #64748b; }
+    .maintenance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+    .maintenance-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; transition: 0.2s; }
+    .card-footer { padding: 15px 20px; background: #f9fafb; border-top: 1px solid #f3f4f6; display: flex; gap: 10px; margin: 20px -20px -20px -20px; border-radius: 0 0 12px 12px; }
+    .btn-edit-small, .btn-delete-small { flex: 1; padding: 8px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    .btn-edit-small { background: white; border: 1px solid #e5e7eb; color: #111827; }
+    .btn-delete-small { background: #fee2e2; border: 1px solid #fecaca; color: #dc2626; }
+    .btn-delete-action { background: #dc2626; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    .priority-badge { font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; }
     .priority-badge.basic { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+    .priority-badge.free { background: #f1f5f9; color: #64748b; }
     .priority-badge.enterprise { background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
+    .btn-primary { background: #111827; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+    .btn-approve { background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
+    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .form-input { width: 100%; padding: 10px; margin: 8px 0 15px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    .btn-outline { background: white; border: 1px solid #ddd; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 700; }
+    label { font-size: 12px; font-weight: 700; color: #374151; }
 </style>

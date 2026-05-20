@@ -27,7 +27,11 @@ else
         <header class="page-header">
             <div class="header-left">
                 <h1>Billing & Payments</h1>
-                <p class="subtitle">Statement for: <strong>@Login.LoggedInName</strong></p>
+                <p class="subtitle">
+                    @if (DbConfig.IsOnline) { <span class="conn-tag online"><span class="pulse-dot"></span> Online</span> }
+                    else { <span class="conn-tag offline">🌐 Offline</span> }
+                    • Statement for: <strong>@Login.LoggedInName</strong>
+                </p>
             </div>
 
             <div class="header-right-group">
@@ -173,13 +177,32 @@ else
         if (hasAccess) {
             await LoadBillingData();
             await LoadProfilePic();
+            
+            // [ RECOVERY SYNC LOGIC ]
+            if (DbConfig.IsOnline) { _ = SyncOfflinePayments(); }
         }
         isChecking = false;
     }
 
+    private async Task SyncOfflinePayments() {
+        try {
+            using SqlConnection local = new(DbConfig.GetLocalRaw); await local.OpenAsync();
+            // Find bills marked PAID locally
+            using var reader = await new SqlCommand($"SELECT Id FROM Billings WHERE TenantId = {Login.LoggedInTenantId} AND Status = 'PAID'", local).ExecuteReaderAsync();
+            
+            using SqlConnection online = new(DbConfig.ConnectionString); await online.OpenAsync();
+            while (await reader.ReadAsync()) {
+                // Ensure cloud mirror is also PAID
+                using SqlCommand cmd = new("UPDATE Billings SET Status = 'PAID' WHERE Id = @id", online);
+                cmd.Parameters.AddWithValue("@id", reader.GetInt32(0));
+                await cmd.ExecuteNonQueryAsync();
+            }
+        } catch { }
+    }
+
     private async Task<bool> CheckModuleAccess(string mod) {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
             string sql = @"SELECT su.IsEnabled FROM SystemUpdates su JOIN Organizations o ON su.PlanType = o.PlanType WHERE o.OrganizationId = @oid AND su.ModuleName = @mod";
             using SqlCommand cmd = new(sql, conn);
             cmd.Parameters.AddWithValue("@oid", Login.LoggedInOrgId);
@@ -197,24 +220,29 @@ else
 
     private async Task ExecutePayment() {
         showConfirmModal = false;
+        // [ DUAL WRITE ]
+        await RunUpdateStatus(DbConfig.GetLocalRaw); // Always Master
+        if (DbConfig.IsOnline) { await RunUpdateStatus(DbConfig.ConnectionString); } // Online Mirror
+
+        statusMessage = "Payment Successful!";
+        await LoadBillingData();
+        StateHasChanged();
+        _ = Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task RunUpdateStatus(string cs) {
         try {
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
-            string sql = "UPDATE Billings SET Status = 'PAID' WHERE Id = @id";
-            using SqlCommand cmd = new(sql, conn);
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
+            using SqlCommand cmd = new("UPDATE Billings SET Status = 'PAID' WHERE Id = @id", conn);
             cmd.Parameters.AddWithValue("@id", pendingBillId);
             await cmd.ExecuteNonQueryAsync();
-            
-            statusMessage = "Payment Successful!";
-            await LoadBillingData();
-            StateHasChanged();
-            _ = Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
         } catch { }
     }
 
     private async Task LoadBillingData() {
         try {
             billings.Clear();
-            using SqlConnection conn = new(_conn); await conn.OpenAsync();
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
             
             string statSql = @"SELECT 
                 ISNULL(SUM(CASE WHEN Status != 'PAID' THEN Amount ELSE 0 END), 0), 
@@ -252,19 +280,24 @@ else
         var buffer = new byte[resized.Size];
         using var stream = resized.OpenReadStream(); await stream.ReadAsync(buffer);
         profilePicBase64 = $"data:image/png;base64,{Convert.ToBase64String(buffer)}";
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
-        string sql = "UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-        await cmd.ExecuteNonQueryAsync();
+        
+        // [ DUAL WRITE ]
+        await RunUpdatePic(DbConfig.GetLocalRaw);
+        if (DbConfig.IsOnline) { await RunUpdatePic(DbConfig.ConnectionString); }
+    }
+
+    private async Task RunUpdatePic(string cs) {
+        try {
+            using SqlConnection conn = new(cs); await conn.OpenAsync();
+            using SqlCommand cmd = new("UPDATE Tenants SET ProfilePicture = @pic WHERE Id = @tid", conn);
+            cmd.Parameters.AddWithValue("@pic", profilePicBase64); cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
+            await cmd.ExecuteNonQueryAsync();
+        } catch { }
     }
 
     private async Task LoadProfilePic() {
-        using SqlConnection conn = new(_conn); await conn.OpenAsync();
-        string sql = "SELECT ProfilePicture FROM Tenants WHERE Id = @tid";
-        using SqlCommand cmd = new(sql, conn);
-        cmd.Parameters.AddWithValue("@tid", Login.LoggedInTenantId);
-        profilePicBase64 = (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+        using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+        profilePicBase64 = (await new SqlCommand($"SELECT ProfilePicture FROM Tenants WHERE Id = {Login.LoggedInTenantId}", conn).ExecuteScalarAsync())?.ToString() ?? "";
     }
 
     public class BillingModel { public int Id { get; set; } public string BillingNumber { get; set; } = ""; public string Type { get; set; } = ""; public decimal Amount { get; set; } public DateTime DueDate { get; set; } public string Status { get; set; } = ""; }
@@ -288,46 +321,45 @@ else
 
 
 <style>
+    /* Connection Tag Style */
+    .conn-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+    .conn-tag.online { color: #10b981; }
+    .conn-tag.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; top:0; left:0; right:0; bottom:0; background: inherit; border-radius: 50%; animation: pulse-bill-sync 1.5s infinite; }
+    @@keyframes pulse-bill-sync { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
+
+    /* YOUR ORIGINAL DESIGN CSS */
     .page-container { padding: 40px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
     .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
     .header-left h1 { font-size: 32px; font-weight: 800; color: #111827; margin: 0; }
     .subtitle { color: #6b7280; font-size: 14px; margin-top: 5px; }
     .peso-bold { font-family: "Arial", "Segoe UI", sans-serif !important; font-weight: 800; margin-right: 2px; }
-    
-    .header-right-group { display: flex; align-items: center; gap: 20px; }
     .user-profile-btn { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 8px 15px; border-radius: 12px; background: white; border: 1px solid #e5e7eb; transition: 0.2s; }
     .user-profile-btn:hover { background: #f1f5f9; }
     .avatar-circle { width: 42px; height: 42px; background: #111827; color: white; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; font-weight: 700; border: 2px solid #d4af37; }
     .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
     .profile-name { font-weight: 700; font-size: 14px; color: #111827; display: block; }
     .profile-role { font-size: 10px; color: #d4af37; text-transform: uppercase; font-weight: 800; }
-
     .status-toast { position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 600; z-index: 99999; border-left: 4px solid #14b8a6; }
-
     .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px; }
     .stat-item { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
     .stat-label { font-size: 13px; color: #6b7280; font-weight: 600; display: block; margin-bottom: 8px; }
     .stat-value { font-size: 24px; font-weight: 800; color: #111827; }
-    .stat-value.overdue { color: #dc2626; }
-
+    .stat-value.overdue { color: #be123c; }
     .table-card { background: white; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; }
     .table-header { display: flex; justify-content: space-between; padding: 20px; border-bottom: 1px solid #f3f4f6; align-items: center; }
     .search-input { padding: 8px 16px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; width: 250px; }
-
     .data-table { width: 100%; border-collapse: collapse; }
     .data-table th { padding: 16px 20px; font-size: 12px; color: #64748b; text-align: left; border-bottom: 1px solid #f3f4f6; text-transform: uppercase; font-weight: 700; }
     .data-table td { padding: 16px 20px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #334155; }
-
     .status-pill { padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
     .status-pill.paid { background: #d1fae5; color: #059669; }
     .status-pill.pending { background: #fef3c7; color: #d97706; }
-
     .btn-pay { background: #111827; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; }
     .btn-pay:hover { background: #14b8a6; }
-
-    /* Custom Confirm Styles */
     .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 9000; }
-    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 450px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+    .modal-content { background: white; padding: 35px; border-radius: 16px; width: 400px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
     .btn-outline-custom { background: white; border: 1px solid #e5e7eb; padding: 10px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; }
     .btn-outline-custom:hover { background: #f8f9fa; }
 </style>

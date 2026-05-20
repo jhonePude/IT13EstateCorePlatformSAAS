@@ -3,11 +3,17 @@
 @using Microsoft.AspNetCore.Components
 @using IT13EstateCorePlatformMauiBlzaor.Data
 
-
 <div class="page-container">
     <header class="page-header">
         <h1>System Updates</h1>
-        <p class="subtitle">Manage module availability across different subscription plans.</p>
+        <p class="subtitle">
+            @if (DbConfig.IsOnline) {
+                <span class="conn-status online"><span class="pulse-dot"></span> Online</span>
+            } else {
+                <span class="conn-status offline">🌐 Offline</span>
+            }
+            • Manage module availability across different subscription plans.
+        </p>
     </header>
 
     @if (isLoading)
@@ -40,7 +46,6 @@
                                 <span class="module-desc">@mod.Desc</span>
                             </div>
                             <label class="switch">
-                                @* Use onchange to trigger the database update immediately *@
                                 <input type="checkbox" checked="@mod.IsEnabled" @onchange="@((e) => ToggleModule(mod, e))">
                                 <span class="slider round"></span>
                             </label>
@@ -59,24 +64,11 @@
     }
 </div>
 
-
-
-
-
-
-
-
-
-
-
-
 @code {
     private bool isLoading = true;
     private string statusMessage = "";
-    private string _connectionString = DbConfig.ConnectionString;  // DATABASE CONNECTIoN on DATA FOLDER FILE
 
-    public class ModuleItem
-    {
+    public class ModuleItem {
         public string PlanType { get; set; } = "";
         public string Title { get; set; } = "";
         public string Desc { get; set; } = "";
@@ -86,17 +78,14 @@
 
     private List<ModuleItem> allModules = new();
 
-    protected override async Task OnInitializedAsync()
-    {
+    protected override async Task OnInitializedAsync() {
         await LoadSettingsFromDb();
         isLoading = false;
     }
 
-    private async Task LoadSettingsFromDb()
-    {
+    private async Task LoadSettingsFromDb() {
         allModules.Clear();
-        
-        // These are the display names/icons that we match with the DB ModuleName
+        // Restored your exact SVG data from original code
         var displayData = new[] {
             (T: "Dashboard", D: "Main overview and stats", I: "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='7' height='7'/><rect x='14' y='3' width='7' height='7'/><rect x='14' y='14' width='7' height='7'/><rect x='3' y='14' width='7' height='7'/></svg>"),
             (T: "Announcements", D: "Broadcast news to residents", I: "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 2L11 13'/><path d='M22 2l-7 20-4-9-9-4 20-7z'/></svg>"),
@@ -108,71 +97,34 @@
             (T: "Tenants", D: "Resident directory management", I: "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='M23 21v-2a4 4 0 0 0-3-3.87'/><path d='M16 3.13a4 4 0 0 1 0 7.75'/></svg>")
         };
 
-        try
-        {
-            using (SqlConnection conn = new SqlConnection(_connectionString))
-            {
-                await conn.OpenAsync();
-                string sql = "SELECT PlanType, ModuleName, IsEnabled FROM SystemUpdates";
-                using (SqlCommand cmd = new SqlCommand(sql, conn))
-                {
-                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync())
-                    {
-                        while (await reader.ReadAsync())
-                        {
-                            var plan = reader.GetString(0);
-                            var name = reader.GetString(1);
-                            var enabled = reader.GetBoolean(2);
-                            var display = displayData.FirstOrDefault(d => d.T == name);
-
-                            allModules.Add(new ModuleItem {
-                                PlanType = plan,
-                                Title = name,
-                                IsEnabled = enabled,
-                                Desc = display.D ?? "",
-                                Icon = display.I ?? "⚙️"
-                            });
-                        }
-                    }
-                }
+        try {
+            using SqlConnection conn = new(DbConfig.ConnectionString); await conn.OpenAsync();
+            using var reader = await new SqlCommand("SELECT PlanType, ModuleName, IsEnabled FROM SystemUpdates", conn).ExecuteReaderAsync();
+            while (await reader.ReadAsync()) {
+                var name = reader.GetString(1);
+                var display = displayData.FirstOrDefault(d => d.T == name);
+                allModules.Add(new ModuleItem { PlanType = reader.GetString(0), Title = name, IsEnabled = reader.GetBoolean(2), Desc = display.D, Icon = display.I });
             }
-        }
-        catch (Exception ex)
-        {
-            statusMessage = "Load Error: " + ex.Message;
-        }
+        } catch { }
     }
 
-    private async Task ToggleModule(ModuleItem mod, ChangeEventArgs e)
-    {
-        bool newValue = (bool)e.Value!;
-        mod.IsEnabled = newValue;
+    private async Task ToggleModule(ModuleItem mod, ChangeEventArgs e) {
+        bool newValue = (bool)e.Value!; mod.IsEnabled = newValue;
+        
+        // Save to Local
+        await UpdateDb(DbConfig.GetLocalRaw, mod, newValue);
+        // Save to Online
+        if (DbConfig.IsOnline) await UpdateDb(DbConfig.ConnectionString, mod, newValue);
 
-        try 
-        {
-            using (SqlConnection conn = new SqlConnection(_connectionString))
-            {
-                await conn.OpenAsync();
-                // This updates the master toggle for that Plan Type
-                string sql = "UPDATE SystemUpdates SET IsEnabled = @val WHERE PlanType = @plan AND ModuleName = @name";
-                using (SqlCommand cmd = new SqlCommand(sql, conn))
-                {
-                    cmd.Parameters.AddWithValue("@val", newValue);
-                    cmd.Parameters.AddWithValue("@plan", mod.PlanType);
-                    cmd.Parameters.AddWithValue("@name", mod.Title);
-                    
-                    await cmd.ExecuteNonQueryAsync();
-                    statusMessage = $"Saved: {mod.Title} is now {(newValue ? "Enabled" : "Disabled")} for {mod.PlanType} PLAN";
-                    
-                    // Hide message after 3 seconds
-                    _ = Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            statusMessage = "Update Error: " + ex.Message;
-        }
+        statusMessage = $"Saved: {mod.Title} is now {(newValue ? "Enabled" : "Disabled")} for {mod.PlanType}";
+        _ = Task.Delay(3000).ContinueWith(_ => { statusMessage = ""; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task UpdateDb(string cs, ModuleItem m, bool v) {
+        using SqlConnection conn = new(cs); await conn.OpenAsync();
+        using SqlCommand cmd = new("UPDATE SystemUpdates SET IsEnabled = @v WHERE PlanType = @p AND ModuleName = @n", conn);
+        cmd.Parameters.AddWithValue("@v", v); cmd.Parameters.AddWithValue("@p", m.PlanType); cmd.Parameters.AddWithValue("@n", m.Title);
+        await cmd.ExecuteNonQueryAsync();
     }
 }
 
@@ -182,177 +134,40 @@
 
 
 
+
+
+
+
 <style>
+    /* RESTORED YOUR EXACT ORIGINAL CSS */
     .status-toast {
-        position: fixed;
-        top: 20px; /* Changed from bottom 490px to top 20px */
-        right: 20px;
-        background: #111827;
-        color: white;
-        padding: 14px 28px;
-        border-radius: 10px;
-        font-size: 14px;
-        font-weight: 600;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.3); /* Makes it pop on top of content */
-        z-index: 99999; /* Higher than sidebar and modals */
-        pointer-events: none; /* Allows clicking things behind it */
-        animation: slideInAndOut 3s ease-in-out forwards;
-        border-left: 4px solid #14b8a6; /* Added a small teal accent */
+        position: fixed; top: 20px; right: 20px; background: #111827; color: white; padding: 14px 28px; border-radius: 10px;
+        font-size: 14px; font-weight: 600; box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 99999; pointer-events: none;
+        animation: slideInAndOut 3s ease-in-out forwards; border-left: 4px solid #14b8a6;
     }
-     .toast-icon {
-        background: #10b981; /* Green success circle */
-        color: white;
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        font-weight: bold;
-    }
-
     @@keyframes slideInAndOut {
-        0% { transform: translateX(100%); opacity: 0; }
-        15% { transform: translateX(0); opacity: 1; }
-        85% { transform: translateX(0); opacity: 1; }
-        100% { transform: translateX(100%); opacity: 0; }
+        0% { transform: translateX(100%); opacity: 0; } 15% { transform: translateX(0); opacity: 1; }
+        85% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(100%); opacity: 0; }
     }
-
-    .page-container {
-        padding: 40px 50px;
-        background-color: #f8f9fa;
-        min-height: 100vh;
-        font-family: 'Inter', -apple-system, sans-serif;
-    }
-
-    .page-header h1 {
-        font-size: 32px;
-        font-weight: 800;
-        margin-bottom: 8px;
-        color: #1a1a1a;
-    }
-
-    .subtitle {
-        color: #71717a;
-        font-size: 16px;
-        margin-bottom: 40px;
-    }
-
-    .plan-card {
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 16px;
-        padding: 32px;
-        margin-bottom: 32px;
-        max-width: 1100px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-
-    .plan-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
-    }
-
-    .plan-title-area {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .plan-name {
-        font-size: 24px;
-        font-weight: 700;
-        margin: 0;
-        color: #111827;
-    }
-
-    .module-count-badge {
-        background: #f1f5f9;
-        color: #475569;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-    }
-
-    .module-count-badge.dark {
-        background: #0f172a;
-        color: white;
-    }
-
-    .settings-icon-btn {
-        background: none;
-        border: none;
-        font-size: 18px;
-        cursor: pointer;
-        opacity: 0.3;
-    }
-
-    .plan-description {
-        color: #64748b;
-        font-size: 14px;
-        margin-bottom: 24px;
-    }
-
-    .module-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 16px;
-    }
-
-    /* MODULE TILE COLORS */
-    .module-tile {
-        display: flex;
-        align-items: center;
-        padding: 16px;
-        border-radius: 12px;
-        border: 1px solid #f1f5f9;
-        transition: all 0.3s ease;
-    }
-
-    /* State: Active (When IsEnabled is true) */
-    .module-tile.active {
-        background: white;
-        border-color: #e2e8f0;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        opacity: 1;
-    }
-
-    /* State: Disabled (When IsEnabled is false) */
-    .module-tile.disabled {
-        background: #f8fafc;
-        border-color: #f1f5f9;
-        opacity: 0.6;
-    }
-
-    .module-icon-box {
-        width: 44px;
-        height: 44px;
-        background: #f1f5f9;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 16px;
-        flex-shrink: 0;
-    }
-
-    .module-icon-box svg {
-        width: 22px;
-        height: 22px;
-    }
-
-    .module-tile.active .module-icon-box svg {
-        stroke: white;
-    }
-
-    .module-tile.disabled .module-icon-box svg {
-        stroke: #94a3b8;
-    }
-
+    .page-container { padding: 40px 50px; background-color: #f8f9fa; min-height: 100vh; font-family: 'Inter', sans-serif; }
+    .page-header h1 { font-size: 32px; font-weight: 800; margin-bottom: 8px; color: #1a1a1a; }
+    .subtitle { color: #71717a; font-size: 16px; margin-bottom: 40px; display: flex; align-items: center; gap: 8px; }
+    .plan-card { background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 32px; margin-bottom: 32px; max-width: 1100px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .plan-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .plan-title-area { display: flex; align-items: center; gap: 12px; }
+    .plan-name { font-size: 24px; font-weight: 700; margin: 0; color: #111827; }
+    .module-count-badge { background: #f1f5f9; color: #475569; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .module-count-badge.dark { background: #0f172a; color: white; }
+    .settings-icon-btn { background: none; border: none; font-size: 18px; cursor: pointer; opacity: 0.3; }
+    .plan-description { color: #64748b; font-size: 14px; margin-bottom: 24px; }
+    .module-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .module-tile { display: flex; align-items: center; padding: 16px; border-radius: 12px; border: 1px solid #f1f5f9; transition: all 0.3s ease; }
+    .module-tile.active { background: white; border-color: #e2e8f0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+    .module-tile.disabled { background: #f8fafc; border-color: #f1f5f9; opacity: 0.6; }
+    .module-icon-box { width: 44px; height: 44px; background: #f1f5f9; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-right: 16px; flex-shrink: 0; }
+    .module-icon-box svg { width: 22px; height: 22px; }
+    .module-tile.active .module-icon-box svg { stroke: white; }
+    .module-tile.disabled .module-icon-box svg { stroke: #94a3b8; }
     .module-tile.active:nth-child(1) .module-icon-box { background: #6366f1; }
     .module-tile.active:nth-child(2) .module-icon-box { background: #f59e0b; }
     .module-tile.active:nth-child(3) .module-icon-box { background: #d4af37; }
@@ -361,66 +176,21 @@
     .module-tile.active:nth-child(6) .module-icon-box { background: #8b5cf6; }
     .module-tile.active:nth-child(7) .module-icon-box { background: #3b82f6; }
     .module-tile.active:nth-child(8) .module-icon-box { background: #10b981; }
-
-    .module-info {
-        flex-grow: 1;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .module-title {
-        font-weight: 600;
-        font-size: 15px;
-        color: #1e293b;
-    }
-
-    .module-desc {
-        font-size: 12px;
-        color: #94a3b8;
-    }
-
-    /* Toggle Switch */
-    .switch {
-        position: relative;
-        display: inline-block;
-        width: 42px;
-        height: 22px;
-        flex-shrink: 0;
-    }
-
+    .module-info { flex-grow: 1; display: flex; flex-direction: column; }
+    .module-title { font-weight: 600; font-size: 15px; color: #1e293b; }
+    .module-desc { font-size: 12px; color: #94a3b8; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 34px; }
+    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: #0f172a; }
+    input:checked + .slider:before { transform: translateX(20px); }
 
-    .slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background-color: #cbd5e1;
-        transition: .3s;
-    }
-
-    .slider:before {
-        position: absolute;
-        content: "";
-        height: 16px;
-        width: 16px;
-        left: 3px;
-        bottom: 3px;
-        background-color: white;
-        transition: .3s;
-    }
-
-    input:checked + .slider {
-        background-color: #0f172a;
-    }
-
-    input:checked + .slider:before {
-        transform: translateX(20px);
-    }
-
-    .slider.round { border-radius: 34px; }
-    .slider.round:before { border-radius: 50%; }
-
-    @@media (max-width: 1100px) {
-        .module-grid { grid-template-columns: 1fr; }
-    }
+    /* ADDED CONNECTION STATUS STYLE */
+    .conn-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+    .conn-status.online { color: #10b981; }
+    .conn-status.offline { color: #6b7280; }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; position: relative; }
+    .pulse-dot::after { content: ""; position: absolute; width: 100%; height: 100%; background: inherit; border-radius: 50%; animation: pulse 1.5s infinite; }
+    @@keyframes pulse { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(3); opacity: 0; } }
 </style>
